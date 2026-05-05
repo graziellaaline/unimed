@@ -1,0 +1,26 @@
+# Ambiente virtual
+venv/
+
+# Banco de dados e dados locais
+dados/historico.db
+dados/
+
+# Uploads temporários
+uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

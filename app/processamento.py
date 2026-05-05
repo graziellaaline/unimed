@@ -1,0 +1,577 @@
+# -*- coding: utf-8 -*-
+"""
+Leitura e cruzamento das 3 fontes: Contratos × Fatura CSV × Compra.
+"""
+import difflib
+import unicodedata
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _norm(s) -> str:
+    txt = str(s or "").upper().strip()
+    nfkd = unicodedata.normalize("NFKD", txt)
+    return " ".join("".join(c for c in nfkd if not unicodedata.combining(c)).split())
+
+
+def _encontrar_col(df: pd.DataFrame, *keywords) -> Optional[str]:
+    for kw in keywords:
+        kw_n = _norm(kw).lower()
+        for col in df.columns:
+            if kw_n in _norm(col).lower():
+                return col
+    return None
+
+
+def _col_por_indice(df: pd.DataFrame, idx: int) -> Optional[str]:
+    """Retorna o nome da coluna pela posição (0-indexed). Ex: 3 = coluna D."""
+    if 0 <= idx < len(df.columns):
+        return df.columns[idx]
+    return None
+
+
+def _ler_planilha(path) -> pd.DataFrame:
+    """
+    Lê CSV ou Excel com detecção automática de cabeçalho.
+    Planilhas de RH frequentemente têm linhas de título antes dos dados —
+    testa até a 8ª linha até encontrar colunas com nomes reais.
+    """
+    p = Path(path)
+
+    if p.suffix.lower() in (".xlsx", ".xls"):
+        for header_row in range(9):
+            try:
+                df = pd.read_excel(p, dtype=str, header=header_row)
+                df = df.dropna(how="all").dropna(how="all", axis=1)
+                if df.empty or len(df.columns) < 2:
+                    continue
+                # Considera bom se ao menos 2 colunas têm nomes reais (não "Unnamed")
+                named = sum(1 for c in df.columns
+                            if not str(c).lower().startswith("unnamed"))
+                if named >= 2:
+                    return df
+            except Exception:
+                continue
+        raise ValueError(f"Não foi possível encontrar o cabeçalho em '{p.name}'. "
+                         "Verifique se o arquivo não está protegido ou corrompido.")
+
+    # CSV — tenta encodings e separadores comuns
+    for enc in ("latin-1", "cp1252", "utf-8-sig", "utf-8"):
+        for sep in (";", ",", "\t", "|"):
+            try:
+                df = pd.read_csv(p, encoding=enc, sep=sep, dtype=str,
+                                 skip_blank_lines=True, on_bad_lines="skip")
+                if len(df.columns) >= 2:
+                    df = df.dropna(how="all").dropna(how="all", axis=1)
+                    if not df.empty:
+                        return df
+            except Exception:
+                continue
+    raise ValueError(f"Não foi possível ler '{p.name}'.")
+
+
+def _parse_brl(v) -> float:
+    s = str(v or "").strip().replace("R$", "").replace("\xa0", "").replace(" ", "")
+    if not s or s.lower() in ("nan", "none", "-", ""):
+        return 0.0
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".") if s.index(",") > s.index(".") else s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _fmt_data(v) -> str:
+    if v is None or str(v).strip() in ("", "nan", "None"):
+        return ""
+    try:
+        ts = pd.to_datetime(v, dayfirst=True, errors="coerce")
+        if pd.isna(ts):
+            ts = pd.to_datetime(v, errors="coerce")
+        return ts.strftime("%d/%m/%Y") if not pd.isna(ts) else str(v).strip()
+    except Exception:
+        return str(v).strip()
+
+
+def _str(v) -> str:
+    s = str(v or "").strip()
+    return "" if s.lower() in ("nan", "none") else s
+
+
+# ---------------------------------------------------------------------------
+# Leitura das 3 fontes
+# ---------------------------------------------------------------------------
+
+_CONTRATOS_INELEGIVEIS = {
+    "DETERMINADO", "TERCEIRIZACAO DETERMINADO", "TERCEIRIZAÇÃO DETERMINADO",
+    "TEMPORARIO", "TEMPORÁRIO", "TERC DETERMINADO",
+}
+
+
+def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
+    """
+    Colunas mapeadas pela Graziella (posição-fallback se keyword não bater):
+      D (idx 3)  = Funcionário
+      G (idx 6)  = Departamento
+      H (idx 7)  = Admissão
+      L (idx 11) = Valor Plano
+    """
+    df = _ler_planilha(path)
+    col_map = col_map or {}
+
+    def col(key, fallback_idx, *defs):
+        # 1. mapeamento explícito salvo
+        if col_map.get(key):
+            return col_map[key]
+        # 2. detecção por keyword no nome da coluna
+        encontrado = _encontrar_col(df, *defs)
+        if encontrado:
+            return encontrado
+        # 3. fallback pela posição informada pela usuária
+        return _col_por_indice(df, fallback_idx)
+
+    c = {
+        "cod_func":     col("cod_func",    0,
+                            "cod. func", "cod func", "codigo", "matricula",
+                            "cód. funcionário", "num func", "cod. funcionario"),
+        "funcionario":  col("funcionario", 3,   # coluna D
+                            "funcionario", "nome", "colaborador", "empregado",
+                            "nome funcionario", "nome do funcionario"),
+        "departamento": col("departamento", 6,  # coluna G
+                            "departamento", "depto", "setor", "centro de custo",
+                            "centro custo", "lotacao", "lotação", "departamento"),
+        "vlr_contrato": col("vlr_contrato", 11, # coluna L
+                            "valor plano", "vlr plano", "plano saude", "plano de saude",
+                            "vl. plano", "vl plano", "valor ps", "saude",
+                            "mensalidade", "vlr. plano", "ps titular", "plano"),
+        "admissao":     col("admissao",    7,   # coluna H
+                            "admissao", "dt. admissao", "data admissao", "data admissão",
+                            "dt admissao", "dt. admissão", "admissão"),
+        "demissao":     col("demissao",    -1,  # sem posição conhecida
+                            "demissao", "dt. demissao", "data demissao", "data demissão",
+                            "dt demissao", "demissão", "rescisao", "desligamento"),
+    }
+
+    rows = []
+    for _, row in df.iterrows():
+        func = _str(row.get(c["funcionario"]) if c["funcionario"] else "")
+        if not func:
+            continue
+        # Ignora linhas que parecem ser cabeçalho repetido
+        if _norm(func) in ("FUNCIONARIO", "NOME", "COLABORADOR", "EMPREGADO",
+                           "NOME FUNCIONARIO", "NOME DO FUNCIONARIO"):
+            continue
+
+        vlr = _parse_brl(row.get(c["vlr_contrato"]) if c["vlr_contrato"] else 0)
+        tem_direito = vlr > 0
+
+        admissao = _fmt_data(row.get(c["admissao"]) if c["admissao"] else "")
+        demissao = _fmt_data(row.get(c["demissao"]) if c["demissao"] else "")
+
+        rows.append({
+            "cod_func":     _str(row.get(c["cod_func"]) if c["cod_func"] else ""),
+            "funcionario":  func,
+            "_norm_func":   _norm(func),
+            "departamento": _str(row.get(c["departamento"]) if c["departamento"] else ""),
+            "tem_direito":  tem_direito,
+            "vlr_contrato": vlr,
+            "admissao":     admissao,
+            "demissao":     demissao,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
+    df = _ler_planilha(path)
+    col_map = col_map or {}
+
+    def col(key, *defs):
+        return col_map.get(key) or _encontrar_col(df, *defs)
+
+    c = {
+        "titular":       col("titular",       "titular", "beneficiario", "nome"),
+        "categoria":     col("categoria",      "categoria", "tipo"),
+        "descricao":     col("descricao",      "descricao", "descrição", "item", "produto", "servico"),
+        "valor":         col("valor",          "valor", "vl.", "preco", "preco unit"),
+        "data_inclusao": col("data_inclusao",  "data inclusao", "data de inclusao", "dt. inclusao",
+                             "dt inclusao", "inclusao", "dt. inclusão", "data inclusão"),
+        "nascimento":    col("nascimento",     "nascimento", "data nasc", "dt nasc", "data de nascimento"),
+    }
+
+    titulares: dict = {}
+
+    for _, row in df.iterrows():
+        nome_raw = _str(row.get(c["titular"]) if c["titular"] else "")
+        if not nome_raw:
+            continue
+
+        nome_norm = _norm(nome_raw)
+
+        # Filtra: só processa linhas com descrição = "Conta médica" ou "Mensalidade/Contribuição Saúde"
+        # Outras linhas estão duplicadas ou são de outro tipo de cobrança
+        desc_raw = _str(row.get(c["descricao"]) if c["descricao"] else "")
+        desc_norm = _norm(desc_raw)
+        _DESCRICOES_VALIDAS = ("CONTA MEDICA", "MENSALIDADE", "CONTRIBUICAO SAUDE",
+                               "CONTRIBUI", "MENSALIDADE/CONTRIBUICAO")
+        if not any(kw in desc_norm for kw in _DESCRICOES_VALIDAS):
+            continue
+
+        categ_raw = _str(row.get(c["categoria"]) if c["categoria"] else "")
+        categ_n   = _norm(categ_raw).upper()
+        eh_titular = (
+            "TITULAR" in categ_n
+            or (not categ_n)  # sem coluna categoria → trata como titular
+        )
+
+        eh_mensalidade = any(kw in desc_norm
+                             for kw in ("MENSALIDADE", "CONTRIBUICAO", "CONTRIBUI"))
+
+        valor = _parse_brl(row.get(c["valor"]) if c["valor"] else 0)
+
+        data_inc = _fmt_data(row.get(c["data_inclusao"]) if c["data_inclusao"] else "")
+        nasc     = _fmt_data(row.get(c["nascimento"])    if c["nascimento"]    else "")
+
+        if nome_norm not in titulares:
+            titulares[nome_norm] = {
+                "nome":            nome_raw,
+                "nascimento":      nasc,
+                "vlr_mensalidade": 0.0,
+                "vlr_dependente":  0.0,
+                "vlr_copart":      0.0,
+                "data_inclusao":   data_inc,
+            }
+        else:
+            # Preenche data_inclusao e nascimento se ainda vazio
+            if data_inc and not titulares[nome_norm]["data_inclusao"]:
+                titulares[nome_norm]["data_inclusao"] = data_inc
+            if nasc and not titulares[nome_norm]["nascimento"]:
+                titulares[nome_norm]["nascimento"] = nasc
+
+        if eh_titular and eh_mensalidade:
+            titulares[nome_norm]["vlr_mensalidade"] += valor
+        elif not eh_titular and eh_mensalidade:
+            titulares[nome_norm]["vlr_dependente"] += valor
+        else:
+            titulares[nome_norm]["vlr_copart"] += valor
+
+    rows = []
+    for nome_norm, d in titulares.items():
+        vlr_mens = round(d["vlr_mensalidade"], 2)
+        vlr_dep  = round(d["vlr_dependente"],  2)
+        vlr_cop  = round(d["vlr_copart"],      2)
+        rows.append({
+            "nome_fatura":        d["nome"],
+            "_norm_fatura":       nome_norm,
+            "nascimento_fat":     d["nascimento"],
+            "vlr_mensalidade":    vlr_mens,
+            "vlr_dependente":     vlr_dep,
+            "vlr_copart":         vlr_cop,
+            # Total fatura = mensalidade + dependentes + coparticipação (Conta médica)
+            "vlr_fatura":         round(vlr_mens + vlr_dep + vlr_cop, 2),
+            "data_inclusao":      d["data_inclusao"],
+        })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["nome_fatura", "_norm_fatura", "nascimento_fat",
+                 "vlr_fatura", "vlr_mensalidade", "vlr_dependente",
+                 "vlr_copart", "data_inclusao"]
+    )
+
+
+def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
+    """
+    Lê múltiplos arquivos de fatura e consolida em um único DataFrame.
+    Titulares que aparecem em mais de uma fatura têm seus valores somados.
+    """
+    if not paths:
+        return pd.DataFrame(
+            columns=["nome_fatura", "_norm_fatura", "nascimento_fat",
+                     "vlr_fatura", "vlr_mensalidade", "vlr_dependente",
+                     "vlr_copart", "data_inclusao"]
+        )
+
+    partes = []
+    for p in paths:
+        try:
+            df_parte = ler_fatura_csv(p, col_map)
+            if not df_parte.empty:
+                partes.append(df_parte)
+        except Exception:
+            continue
+
+    if not partes:
+        return pd.DataFrame(
+            columns=["nome_fatura", "_norm_fatura", "nascimento_fat",
+                     "vlr_fatura", "vlr_mensalidade", "vlr_dependente",
+                     "vlr_copart", "data_inclusao"]
+        )
+
+    df_all = pd.concat(partes, ignore_index=True)
+
+    # Consolida: mesma pessoa em arquivos diferentes → soma valores, mantém 1ª data de inclusão
+    df_cons = (
+        df_all.groupby("_norm_fatura", as_index=False)
+        .agg(
+            nome_fatura    =("nome_fatura",    "first"),
+            nascimento_fat =("nascimento_fat", "first"),
+            vlr_fatura     =("vlr_fatura",     "sum"),
+            vlr_mensalidade=("vlr_mensalidade","sum"),
+            vlr_dependente =("vlr_dependente", "sum"),
+            vlr_copart     =("vlr_copart",     "sum"),
+            data_inclusao  =("data_inclusao",  "first"),
+        )
+    )
+    for col in ["vlr_fatura", "vlr_mensalidade", "vlr_dependente", "vlr_copart"]:
+        df_cons[col] = df_cons[col].round(2)
+
+    return df_cons
+
+
+def ler_compra(path, col_map: dict = None) -> pd.DataFrame:
+    """
+    Lê planilha de compras e agrupa por funcionário.
+    Cada funcionário pode ter múltiplas linhas (titular + dependentes).
+    - vlr_empresa (col K): parcela da empresa → comparada com valor do contrato
+    - vlr_func   (col L): parcela do beneficiário
+    - vlr_compra_total   : soma de TODAS as linhas (empresa + func) → comparada com fatura
+    """
+    df = _ler_planilha(path)
+    col_map = col_map or {}
+
+    def col(key, fallback_idx, *defs):
+        if col_map.get(key):
+            return col_map[key]
+        encontrado = _encontrar_col(df, *defs)
+        if encontrado:
+            return encontrado
+        return _col_por_indice(df, fallback_idx)
+
+    c = {
+        "cod_func":    col("cod_func",    -1,
+                           "cod. func", "cod func", "codigo", "matricula",
+                           "cód. funcionário", "num func"),
+        "funcionario": col("funcionario", 5,   # coluna F
+                           "funcionario", "nome", "colaborador", "empregado",
+                           "nome do funcionario", "nome funcionario"),
+        "vlr_empresa": col("vlr_empresa", 10,  # coluna K
+                           "valor empresa", "vlr empresa", "empresa", "valor emp",
+                           "vl. empresa", "emp", "patronal", "empresa ps",
+                           "val empresa", "val. empresa"),
+        "vlr_func":    col("vlr_func",    11,  # coluna L
+                           "valor beneficiario", "vlr beneficiario", "beneficiario",
+                           "valor funcionario", "vlr funcionario",
+                           "vl. beneficiario", "func ps", "val funcionario",
+                           "val. funcionario"),
+    }
+
+    # Lê todas as linhas brutas
+    linhas: dict = {}   # _norm_func → acumulador
+    for _, row in df.iterrows():
+        func = _str(row.get(c["funcionario"]) if c["funcionario"] else "")
+        if not func or func.lower() in ("funcionario", "nome", "colaborador"):
+            continue
+
+        norm = _norm(func)
+        vlr_emp = _parse_brl(row.get(c["vlr_empresa"]) if c["vlr_empresa"] else 0)
+        vlr_fun = _parse_brl(row.get(c["vlr_func"])    if c["vlr_func"]    else 0)
+        cod     = _str(row.get(c["cod_func"]) if c["cod_func"] else "")
+
+        if norm not in linhas:
+            linhas[norm] = {
+                "cod_func_compra": cod,
+                "nome_compra":     func,
+                "_norm_compra":    norm,
+                "vlr_empresa":     0.0,
+                "vlr_func":        0.0,
+            }
+        # Acumula todas as linhas (titular + dependentes)
+        linhas[norm]["vlr_empresa"] += vlr_emp
+        linhas[norm]["vlr_func"]    += vlr_fun
+
+    if not linhas:
+        return pd.DataFrame(
+            columns=["cod_func_compra", "nome_compra", "_norm_compra",
+                     "vlr_empresa", "vlr_func", "vlr_compra_total"]
+        )
+
+    rows = []
+    for d in linhas.values():
+        rows.append({
+            "cod_func_compra":  d["cod_func_compra"],
+            "nome_compra":      d["nome_compra"],
+            "_norm_compra":     d["_norm_compra"],
+            "vlr_empresa":      round(d["vlr_empresa"], 2),  # comparar com contrato
+            "vlr_func":         round(d["vlr_func"],    2),
+            "vlr_compra_total": round(d["vlr_empresa"] + d["vlr_func"], 2),  # comparar c/ fatura
+        })
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Matching por nome
+# ---------------------------------------------------------------------------
+
+def _match_nome(nome_a: str, nomes_b: list, threshold=0.72) -> Optional[int]:
+    if not nome_a or not nomes_b:
+        return None
+    best_i, best_s = None, 0.0
+    for i, nb in enumerate(nomes_b):
+        s = difflib.SequenceMatcher(None, nome_a, nb).ratio()
+        if s > best_s and s >= threshold:
+            best_s, best_i = s, i
+    return best_i
+
+
+# ---------------------------------------------------------------------------
+# Cruzamento principal
+# ---------------------------------------------------------------------------
+
+def cruzar(df_cont: pd.DataFrame,
+           df_fat: pd.DataFrame,
+           df_compra: pd.DataFrame,
+           periodo: str) -> pd.DataFrame:
+
+    if df_cont.empty:
+        return pd.DataFrame()
+
+    fat_nomes    = df_fat["_norm_fatura"].tolist()    if not df_fat.empty    else []
+    compra_nomes = df_compra["_norm_compra"].tolist() if not df_compra.empty else []
+
+    fat_usadas    = set()
+    compra_usadas = set()
+    resultado     = []
+
+    # ── 1. Funcionários do contrato ─────────────────────────────────────────
+    for _, cont in df_cont.iterrows():
+        nome_c = cont["_norm_func"]
+
+        fat_idx = None
+        if fat_nomes:
+            idx = _match_nome(nome_c, fat_nomes)
+            if idx is not None and idx not in fat_usadas:
+                fat_idx = idx
+                fat_usadas.add(idx)
+
+        compra_idx = None
+        if compra_nomes:
+            idx = _match_nome(nome_c, compra_nomes)
+            if idx is not None and idx not in compra_usadas:
+                compra_idx = idx
+                compra_usadas.add(idx)
+
+        fat   = df_fat.iloc[fat_idx]     if fat_idx    is not None else None
+        comp  = df_compra.iloc[compra_idx] if compra_idx is not None else None
+
+        na_fatura = fat  is not None
+        na_compra = comp is not None
+
+        vlr_fat       = float(fat["vlr_fatura"])      if na_fatura else 0.0
+        vlr_mens_fat  = float(fat["vlr_mensalidade"]) if na_fatura else 0.0
+        vlr_copart_fat= float(fat["vlr_copart"])      if na_fatura else 0.0
+        vlr_emp       = float(comp["vlr_empresa"])     if na_compra else 0.0
+        vlr_comp_tot  = float(comp["vlr_compra_total"])if na_compra else 0.0
+        data_inc = str(fat["data_inclusao"]) if na_fatura else ""
+
+        demissao  = cont.get("demissao", "")
+        desligado = bool(demissao and str(demissao).strip() not in ("", "nan"))
+
+        resultado.append({
+            "Funcionário":        cont["funcionario"],
+            "Departamento":       cont["departamento"],
+            "Cod. Funcionário":   cont["cod_func"],
+            "Tem Direito":        "Sim" if cont["tem_direito"] else "Não",
+            "Está na Fatura":     "Sim" if na_fatura else "Não",
+            "Está na Compra":     "Sim" if na_compra else "Não",
+            "Valor Fatura":       vlr_fat,
+            "Valor Empresa (Compra)": vlr_emp,      # comparar com contrato
+            "Valor Compra Total": vlr_comp_tot,     # comparar com fatura
+            "Valor Contrato":     cont["vlr_contrato"],
+            "Dif. Contrato x Compra": round(vlr_emp - cont["vlr_contrato"], 2),
+            "Dif. Fatura x Compra":   round(vlr_fat - vlr_comp_tot, 2),
+            "Data Inclusão":      data_inc,
+            "Dt. Admissão":       cont.get("admissao", ""),
+            "Dt. Demissão":       demissao,
+            "Período":            periodo,
+            "_na_fatura":         na_fatura,
+            "_na_compra":         na_compra,
+            "_desligado":         desligado,
+            "_sem_contrato":      False,
+        })
+
+    # ── 2. Na fatura mas sem contrato ───────────────────────────────────────
+    for i, fat in df_fat.iterrows():
+        if i in fat_usadas:
+            continue
+
+        comp_idx = _match_nome(fat["_norm_fatura"], compra_nomes)
+        comp = None
+        if comp_idx is not None and comp_idx not in compra_usadas:
+            comp = df_compra.iloc[comp_idx]
+            compra_usadas.add(comp_idx)
+
+        vlr_comp_tot = float(comp["vlr_compra_total"]) if comp is not None else 0.0
+        vlr_emp      = float(comp["vlr_empresa"])     if comp is not None else 0.0
+        vlr_fat_f    = float(fat["vlr_fatura"])
+
+        resultado.append({
+            "Funcionário":            fat["nome_fatura"],
+            "Departamento":           "",
+            "Cod. Funcionário":       "",
+            "Tem Direito":            "—",
+            "Está na Fatura":         "Sim",
+            "Está na Compra":         "Sim" if comp is not None else "Não",
+            "Valor Fatura":           vlr_fat_f,
+            "Valor Empresa (Compra)": vlr_emp,
+            "Valor Compra Total":     vlr_comp_tot,
+            "Valor Contrato":         0.0,
+            "Dif. Contrato x Compra": 0.0,
+            "Dif. Fatura x Compra":   round(vlr_fat_f - vlr_comp_tot, 2),
+            "Data Inclusão":          str(fat["data_inclusao"]),
+            "Dt. Admissão":           "",
+            "Dt. Demissão":           "",
+            "Período":                periodo,
+            "_na_fatura":             True,
+            "_na_compra":             comp is not None,
+            "_desligado":             False,
+            "_sem_contrato":          True,
+        })
+
+    # ── 3. Na compra mas sem contrato e sem fatura ──────────────────────────
+    for i, comp in df_compra.iterrows():
+        if i in compra_usadas:
+            continue
+        resultado.append({
+            "Funcionário":            comp["nome_compra"],
+            "Departamento":           "",
+            "Cod. Funcionário":       comp.get("cod_func_compra", ""),
+            "Tem Direito":            "—",
+            "Está na Fatura":         "Não",
+            "Está na Compra":         "Sim",
+            "Valor Fatura":           0.0,
+            "Valor Empresa (Compra)": float(comp["vlr_empresa"]),
+            "Valor Compra Total":     float(comp["vlr_compra_total"]),
+            "Valor Contrato":         0.0,
+            "Dif. Contrato x Compra": 0.0,
+            "Dif. Fatura x Compra":   round(-float(comp["vlr_compra_total"]), 2),
+            "Data Inclusão":          "",
+            "Dt. Admissão":           "",
+            "Dt. Demissão":           "",
+            "Período":                periodo,
+            "_na_fatura":             False,
+            "_na_compra":             True,
+            "_desligado":             False,
+            "_sem_contrato":          True,
+        })
+
+    return pd.DataFrame(resultado)
