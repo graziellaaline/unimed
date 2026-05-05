@@ -12,6 +12,16 @@
 
 ## Histórico
 
+### V1.4.03 — 2026-05-05
+**Correção crítica: filtro de descrição da fatura era parcial, somava linhas erradas**
+- `app/processamento.py` — `ler_fatura_csv`: substituído filtro por substring (muito amplo) por
+  correspondência EXATA:
+  - `"Conta médica"` → aceito se desc_norm == "CONTA MEDICA"
+  - `"Mensalidade/Contribuição Saúde"` → aceito se contém "MENSALIDADE" E "CONTRIBUICAO"
+  - Qualquer outra linha (odonto, previdência, taxas, duplicatas, etc.) é ignorada
+- Corrige total incorreto de ALINE FRANCELINO (sistema mostrava R$ 652,86 ou R$ 452,86;
+  correto é R$ 293,79 + R$ 150,00 = R$ 443,79).
+
 ### V1.4.02 — 2026-05-05
 **Correção: recarregar auditoria retornava vazio (pandas 3.x)**
 - `app/db.py` — `carregar_auditoria`: `pd.read_json(df_json)` substituído por `pd.read_json(io.StringIO(df_json))`. No pandas 3.x passar string diretamente retorna DataFrame vazio silenciosamente; `io.StringIO` é obrigatório.

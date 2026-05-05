@@ -217,13 +217,15 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
 
         nome_norm = _norm(nome_raw)
 
-        # Filtra: só processa linhas com descrição = "Conta médica" ou "Mensalidade/Contribuição Saúde"
-        # Outras linhas estão duplicadas ou são de outro tipo de cobrança
-        desc_raw = _str(row.get(c["descricao"]) if c["descricao"] else "")
+        desc_raw  = _str(row.get(c["descricao"]) if c["descricao"] else "")
         desc_norm = _norm(desc_raw)
-        _DESCRICOES_VALIDAS = ("CONTA MEDICA", "MENSALIDADE", "CONTRIBUICAO SAUDE",
-                               "CONTRIBUI", "MENSALIDADE/CONTRIBUICAO")
-        if not any(kw in desc_norm for kw in _DESCRICOES_VALIDAS):
+
+        # Regra EXATA: só aceita as duas descrições informadas pela Graziella.
+        # Qualquer outra linha (duplicata, taxa, odonto, previdência, etc.) é ignorada.
+        eh_conta_medica  = (desc_norm == "CONTA MEDICA")
+        eh_mensalidade_s = ("MENSALIDADE" in desc_norm and "CONTRIBUICAO" in desc_norm)
+
+        if not (eh_conta_medica or eh_mensalidade_s):
             continue
 
         categ_raw = _str(row.get(c["categoria"]) if c["categoria"] else "")
@@ -233,8 +235,8 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
             or (not categ_n)  # sem coluna categoria → trata como titular
         )
 
-        eh_mensalidade = any(kw in desc_norm
-                             for kw in ("MENSALIDADE", "CONTRIBUICAO", "CONTRIBUI"))
+        # "Conta médica" = coparticipação; "Mensalidade/Contribuição Saúde" = mensalidade
+        eh_mensalidade = eh_mensalidade_s
 
         valor = _parse_brl(row.get(c["valor"]) if c["valor"] else 0)
 
