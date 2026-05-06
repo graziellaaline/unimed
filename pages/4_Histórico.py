@@ -8,7 +8,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ui import barra_lateral
 from app import db
-from app.regras import identificar_incluidos_mes
+from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
 
 st.set_page_config(page_title="Histórico — Auditoria Unimed", layout="wide")
 barra_lateral()
@@ -43,6 +43,8 @@ if btn:
     if df_loaded is None or df_loaded.empty:
         st.error("Não foi possível carregar a auditoria selecionada.")
     else:
+        df_loaded = aplicar_regras(df_loaded)
+        stats = calcular_stats(df_loaded)
         df_inc = identificar_incluidos_mes(df_loaded, periodo_sel)
         st.session_state.update({
             "df_audit":     df_loaded,

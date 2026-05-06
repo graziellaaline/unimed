@@ -45,28 +45,34 @@ st.divider()
 
 # ── Filtros ───────────────────────────────────────────────────────────────────
 with st.expander("🔍 Filtros", expanded=True):
-    f1, f2, f3, f4, f5 = st.columns(5)
+    f1, f2, f3, f4, f5, f6 = st.columns(6)
 
     status_vals = ["Todos"] + sorted(df["Status"].dropna().unique().tolist())
     f_status = f1.selectbox("Status", status_vals)
 
+    deps = ["Todos"]
     if "Departamento" in df.columns:
-        deps = ["Todos"] + sorted(df["Departamento"].dropna().unique().tolist())
-        f_dep = f2.selectbox("Departamento", deps)
-    else:
-        f_dep = "Todos"
+        deps += sorted([v for v in df["Departamento"].dropna().unique().tolist() if str(v).strip()])
+    f_dep = f2.selectbox("Departamento", deps)
 
-    f_nome = f3.text_input("Funcionário (parte do nome)")
+    contratos_adm = ["Todos"]
+    if "Contrato Adm." in df.columns:
+        contratos_adm += sorted([v for v in df["Contrato Adm."].dropna().unique().tolist() if str(v).strip()])
+    f_contrato_adm = f3.selectbox("Contrato Adm.", contratos_adm)
+
+    f_nome = f4.text_input("Funcionário (parte do nome)")
 
     inc_opts = ["Todos", "Sim", "Não"]
-    f_fatura = f4.selectbox("Está na Fatura", inc_opts)
-    f_compra = f5.selectbox("Está na Compra", inc_opts)
+    f_fatura = f5.selectbox("Está na Fatura", inc_opts)
+    f_compra = f6.selectbox("Está na Compra", inc_opts)
 
 df_f = df.copy()
 if f_status != "Todos":
     df_f = df_f[df_f["Status"] == f_status]
 if f_dep != "Todos" and "Departamento" in df_f.columns:
     df_f = df_f[df_f["Departamento"] == f_dep]
+if f_contrato_adm != "Todos" and "Contrato Adm." in df_f.columns:
+    df_f = df_f[df_f["Contrato Adm."] == f_contrato_adm]
 if f_nome:
     df_f = df_f[df_f["Funcionário"].str.contains(f_nome, case=False, na=False)]
 if f_fatura != "Todos":
@@ -76,9 +82,96 @@ if f_compra != "Todos":
 
 st.caption(f"**{len(df_f)}** registro(s) exibido(s)")
 
+# ── Gráficos ────────────────────────────────────────────────────────────────
+def _base_gastos(df_base, grupo):
+    if grupo not in df_base.columns:
+        return pd.DataFrame()
+
+    cols_valor = [c for c in ["Valor Fatura", "Valor Compra Total", "Valor Contrato"] if c in df_base.columns]
+    if not cols_valor:
+        return pd.DataFrame()
+
+    df_grp = df_base.copy()
+    df_grp[grupo] = df_grp[grupo].fillna("").astype(str).str.strip()
+    df_grp = df_grp[df_grp[grupo] != ""]
+    if df_grp.empty:
+        return pd.DataFrame()
+
+    return (
+        df_grp.groupby(grupo, as_index=False)[cols_valor]
+        .sum()
+        .sort_values("Valor Fatura" if "Valor Fatura" in cols_valor else cols_valor[0], ascending=False)
+    )
+
+
+def _base_desvios(df_base, grupo):
+    if grupo not in df_base.columns:
+        return pd.DataFrame()
+
+    cols_desvio = [c for c in ["Dif. Contrato x Compra", "Dif. Fatura x Compra"] if c in df_base.columns]
+    if not cols_desvio:
+        return pd.DataFrame()
+
+    df_grp = df_base.copy()
+    df_grp[grupo] = df_grp[grupo].fillna("").astype(str).str.strip()
+    df_grp = df_grp[df_grp[grupo] != ""]
+    if df_grp.empty:
+        return pd.DataFrame()
+
+    for col in cols_desvio:
+        if col in df_grp.columns:
+            df_grp[col] = pd.to_numeric(df_grp[col], errors="coerce").fillna(0).abs()
+
+    return (
+        df_grp.groupby(grupo, as_index=False)[cols_desvio]
+        .sum()
+        .sort_values(cols_desvio[0], ascending=False)
+    )
+
+
+st.divider()
+st.markdown("### Gráficos de Gastos")
+g1, g2 = st.columns(2)
+
+with g1:
+    st.markdown("**Por Departamento**")
+    gastos_dep = _base_gastos(df_f, "Departamento")
+    if gastos_dep.empty:
+        st.caption("Sem dados de departamento para exibir.")
+    else:
+        st.bar_chart(gastos_dep.set_index("Departamento"))
+
+with g2:
+    st.markdown("**Por Contrato Adm.**")
+    gastos_contrato = _base_gastos(df_f, "Contrato Adm.")
+    if gastos_contrato.empty:
+        st.caption("Sem dados de Contrato Adm. para exibir.")
+    else:
+        st.bar_chart(gastos_contrato.set_index("Contrato Adm."))
+
+st.divider()
+st.markdown("### Gráficos de Desvio")
+d1, d2 = st.columns(2)
+
+with d1:
+    st.markdown("**Desvio por Departamento**")
+    desvios_dep = _base_desvios(df_f, "Departamento")
+    if desvios_dep.empty:
+        st.caption("Sem desvios por departamento para exibir.")
+    else:
+        st.bar_chart(desvios_dep.set_index("Departamento"))
+
+with d2:
+    st.markdown("**Desvio por Contrato Adm.**")
+    desvios_contrato = _base_desvios(df_f, "Contrato Adm.")
+    if desvios_contrato.empty:
+        st.caption("Sem desvios por Contrato Adm. para exibir.")
+    else:
+        st.bar_chart(desvios_contrato.set_index("Contrato Adm."))
+
 # ── Tabela ────────────────────────────────────────────────────────────────────
 COLS_EX = [
-    "Funcionário", "Departamento",
+    "Funcionário", "Departamento", "Contrato Adm.",
     "Tem Direito", "Está na Fatura", "Está na Compra",
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
     "Dif. Contrato x Compra", "Dif. Fatura x Compra",

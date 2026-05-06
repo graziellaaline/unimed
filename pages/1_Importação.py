@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.ui import barra_lateral
 from app.processamento import (ler_contratos, ler_compra,
-                                ler_faturas_csv, cruzar, _encontrar_col)
-from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
+                                 ler_faturas_csv, cruzar, _encontrar_col)
+from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes, _parse_periodo
 from app import db
 
 st.set_page_config(page_title="Importação — Auditoria Unimed", layout="wide")
@@ -52,6 +52,8 @@ elif _ultimos:
                 _ultimo["periodo"], _ultimo["cliente"]
             )
         if _df is not None and not _df.empty:
+            _df = aplicar_regras(_df)
+            _stats = calcular_stats(_df)
             st.session_state["df_audit"]     = _df
             st.session_state["df_inc"]       = identificar_incluidos_mes(_df, _ultimo["periodo"])
             st.session_state["stats"]        = _stats or {}
@@ -78,10 +80,10 @@ with c1:
         "Mês/Ano  *(obrigatório)*",
         value=st.session_state.get("periodo", ""),
         placeholder="04/2026",
-        help="Digite o mês e ano no formato MM/AAAA, ex: 04/2026",
+        help="Digite o mês e ano no formato MM/AA ou MM/AAAA, ex: 04/26 ou 04/2026",
     )
-    if periodo and "/" not in periodo:
-        st.error("Formato inválido — use MM/AAAA, ex: 04/2026")
+    if periodo and _parse_periodo(periodo) == (None, None):
+        st.error("Formato inválido — use MM/AA ou MM/AAAA, ex: 04/26 ou 04/2026")
         periodo = ""
 with c2:
     cliente = st.text_input(
@@ -128,22 +130,42 @@ def _ler_colunas_arq(arq):
         arq.seek(0)
         dados = arq.read()
         nome = arq.name.lower()
+
+        def _cols_validas(df):
+            if df.empty or len(df.columns) < 2:
+                return False
+            named = sum(1 for c in df.columns if not str(c).lower().startswith("unnamed"))
+            return named >= 2
+
         if nome.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(dados), dtype=str, nrows=3)
-        else:
-            # Tenta com separadores comuns; nrows=3 para o sniffer funcionar
-            for sep in (";", ",", "\t", "|"):
+            for header_row in range(9):
                 try:
-                    df = pd.read_csv(io.BytesIO(dados), sep=sep, dtype=str,
-                                      nrows=3, encoding="latin-1")
-                    if len(df.columns) >= 2:
+                    df = pd.read_excel(io.BytesIO(dados), dtype=str, header=header_row)
+                    df = df.dropna(how="all").dropna(how="all", axis=1)
+                    if _cols_validas(df):
                         return list(df.columns)
                 except Exception:
                     continue
-            # Fallback: sep=None com engine python
-            df = pd.read_csv(io.BytesIO(dados), sep=None, engine="python",
-                               dtype=str, nrows=3, encoding="latin-1")
-        return list(df.columns)
+        else:
+            for enc in ("latin-1", "cp1252", "utf-8-sig", "utf-8"):
+                for sep in (";", ",", "\t", "|"):
+                    for header_row in range(9):
+                        try:
+                            df = pd.read_csv(
+                                io.BytesIO(dados),
+                                sep=sep,
+                                dtype=str,
+                                encoding=enc,
+                                header=header_row,
+                                skip_blank_lines=True,
+                                on_bad_lines="skip",
+                            )
+                            df = df.dropna(how="all").dropna(how="all", axis=1)
+                            if _cols_validas(df):
+                                return list(df.columns)
+                        except Exception:
+                            continue
+        return []
     except Exception:
         return []
 
@@ -172,10 +194,11 @@ if arq_cont or arq_fats or arq_comp:
         df_cont_preview = pd.DataFrame(columns=cols_cont)
         with dc1:
             _mostrar_cols("Contratos", cols_cont, {
-                "Funcionário (col D)":  _encontrar_col(df_cont_preview, "funcionario","nome","colaborador") or (cols_cont[3]  if len(cols_cont) > 3  else None),
-                "Departamento (col G)": _encontrar_col(df_cont_preview, "departamento","depto","setor")     or (cols_cont[6]  if len(cols_cont) > 6  else None),
-                "Valor Plano (col L)":  _encontrar_col(df_cont_preview, "valor plano","vlr plano","plano","saude","mensalidade") or (cols_cont[11] if len(cols_cont) > 11 else None),
-                "Admissão (col H)":     _encontrar_col(df_cont_preview, "admissao","dt. admissao","admissão") or (cols_cont[7]  if len(cols_cont) > 7  else None),
+                "Funcionário":         _encontrar_col(df_cont_preview, "funcionario","funcionária","nome funcionario","nome da funcionária","nome"),
+                "Departamento":        _encontrar_col(df_cont_preview, "departamento","depto","setor","unidade","lotação"),
+                "Contrato Adm.":       _encontrar_col(df_cont_preview, "contrato adm","contrato administrativo","contrato adm.","contr. adm","tipo contrato"),
+                "Valor Plano":         _encontrar_col(df_cont_preview, "valor plano","vlr plano","mensalidade titular","valor mensal titular","plano","saude","mensalidade"),
+                "Admissão":            _encontrar_col(df_cont_preview, "admissao","dt. admissao","admissão","dt adm","data adm"),
             })
 
         # Fatura
@@ -195,18 +218,18 @@ if arq_cont or arq_fats or arq_comp:
         df_comp_preview = pd.DataFrame(columns=cols_comp)
         with dc3:
             _mostrar_cols("Compra", cols_comp, {
-                "Funcionário (col F)":    _encontrar_col(df_comp_preview, "funcionario","nome","colaborador") or (cols_comp[5]  if len(cols_comp) > 5  else None),
-                "Valor Empresa (col K)":  _encontrar_col(df_comp_preview, "valor empresa","empresa","emp","patronal")           or (cols_comp[10] if len(cols_comp) > 10 else None),
-                "Valor Func. (col L)":    _encontrar_col(df_comp_preview, "valor beneficiario","beneficiario","funcionario")    or (cols_comp[11] if len(cols_comp) > 11 else None),
+                "Funcionário":            _encontrar_col(df_comp_preview, "funcionario","funcionária","nome funcionario","titular","nome"),
+                "Valor Empresa":          _encontrar_col(df_comp_preview, "valor empresa","valor mensal empresa","mensalidade empresa","patronal","custo empresa","empresa"),
+                "Valor Func.":            _encontrar_col(df_comp_preview, "valor beneficiario","valor funcionario","mensalidade funcionario","desconto funcionario","beneficiario"),
             })
 
 # ── Botão processar ──────────────────────────────────────────────────────────
-pode_processar = bool(arq_cont and periodo and "/" in periodo)
+pode_processar = bool(arq_cont and periodo and _parse_periodo(periodo) != (None, None))
 
 if not arq_cont:
     st.info("📋 Carregue a **planilha de contratos** para habilitar o processamento.")
 elif not periodo:
-    st.warning("📅 Preencha o **período de referência** (ex: 04/2026) para habilitar o processamento.")
+    st.warning("📅 Preencha o **período de referência** (ex: 04/26 ou 04/2026) para habilitar o processamento.")
 
 st.markdown("---")
 btn = st.button(

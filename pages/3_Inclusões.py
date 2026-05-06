@@ -30,14 +30,36 @@ if df_inc is None or df_inc.empty:
 
 st.success(f"**{len(df_inc)}** funcionário(s) incluído(s) no plano em {periodo}")
 
+# ── Filtros ─────────────────────────────────────────────────────────────────
+with st.expander("🔍 Filtros", expanded=True):
+    f1, f2 = st.columns(2)
+
+    deps = ["Todos"]
+    if "Departamento" in df_inc.columns:
+        deps += sorted([v for v in df_inc["Departamento"].dropna().unique().tolist() if str(v).strip()])
+    f_dep = f1.selectbox("Departamento", deps)
+
+    contratos_adm = ["Todos"]
+    if "Contrato Adm." in df_inc.columns:
+        contratos_adm += sorted([v for v in df_inc["Contrato Adm."].dropna().unique().tolist() if str(v).strip()])
+    f_contrato_adm = f2.selectbox("Contrato Adm.", contratos_adm)
+
+df_inc_f = df_inc.copy()
+if f_dep != "Todos" and "Departamento" in df_inc_f.columns:
+    df_inc_f = df_inc_f[df_inc_f["Departamento"] == f_dep]
+if f_contrato_adm != "Todos" and "Contrato Adm." in df_inc_f.columns:
+    df_inc_f = df_inc_f[df_inc_f["Contrato Adm."] == f_contrato_adm]
+
+st.caption(f"**{len(df_inc_f)}** inclusão(ões) exibida(s)")
+
 # ── Tabela ─────────────────────────────────────────────────────────────────
 COLS = [
-    "Funcionário", "Departamento", "Dt. Admissão", "Data Inclusão",
-    "Período", "Valor Fatura", "Valor Contrato", "Tem Direito", "Contrato",
+    "Funcionário", "Departamento", "Contrato Adm.", "Dt. Admissão", "Data Inclusão",
+    "Período", "Valor Fatura", "Valor Contrato", "Tem Direito",
 ]
-cols_ok = [c for c in COLS if c in df_inc.columns]
+cols_ok = [c for c in COLS if c in df_inc_f.columns]
 
-df_tab = df_inc[cols_ok].copy()
+df_tab = df_inc_f[cols_ok].copy()
 
 def _brl(v):
     try:

@@ -12,6 +12,56 @@
 
 ## Histórico
 
+### V1.4.11 — 2026-05-05
+**Pré-visualização de colunas alinhada ao processamento real**
+- `pages/1_Importação.py` — o painel de colunas detectadas agora usa a mesma lógica de detecção de cabeçalho do processamento real para Excel e CSV, reduzindo falsos `não encontrado` na importação.
+- Mantida a correlação por nomenclatura ampliada para `Contratos` e `Compra`, sem dependência de coluna fixa.
+
+### V1.4.10 — 2026-05-05
+**Correlação ampliada por nomenclatura + gráficos analíticos**
+- `app/processamento.py` — ampliada a lista de nomes correlatos para leitura de `Contratos` e `Compra`, cobrindo variações como `Funcionária`, `Matrícula`, `Setor`, `Unidade`, `Valor Mensal`, `Mensalidade Titular`, `Patronal`, `Custo Empresa`, `Desconto Funcionário` e similares, sem voltar a usar posição fixa.
+- `pages/1_Importação.py` — painel de colunas detectadas alinhado com os novos nomes correlatos para facilitar a conferência do mapeamento.
+- `pages/2_Auditoria.py` — adicionados gráficos de gastos por `Departamento` e `Contrato Adm.` e gráficos de desvio por essas mesmas categorias.
+
+### V1.4.09 — 2026-05-05
+**Remoção de duplicatas idênticas na consolidação da fatura**
+- `app/processamento.py` — `ler_faturas_csv`: antes de consolidar por titular, agora remove duplicatas exatas do mesmo conjunto de valores para evitar dobrar o `Valor Fatura` quando o mesmo conteúdo é enviado mais de uma vez.
+- Corrige casos como o de `JEANE FONTINELE RIBEIRO DE SOUSA`, em que o total da fatura estava sendo somado em dobro.
+
+### V1.4.08 — 2026-05-05
+**Mapeamento 100% por nomenclatura das colunas**
+- `app/processamento.py` — removidos os fallbacks por posição nas leituras de `Contratos` e `Compra`; a identificação dos campos agora depende apenas do nome das colunas.
+- `pages/1_Importação.py` — painel de colunas detectadas atualizado para refletir apenas detecção por nomenclatura, sem referências a colunas fixas.
+
+### V1.4.07 — 2026-05-05
+**Correção de fallback da coluna Contrato Adm.**
+- `app/processamento.py` — `Contrato Adm.` nos contratos agora usa fallback fixo na coluna `F` (índice 5) quando a detecção por nome não encontrar o campo.
+
+### V1.4.06 — 2026-05-05
+**Filtros sempre visíveis + recálculo ao carregar histórico**
+- `pages/2_Auditoria.py` e `pages/3_Inclusões.py` — filtros de `Departamento` e `Contrato Adm.` agora aparecem sempre, mesmo quando a auditoria carregada não tem valores disponíveis para esses campos.
+- `app/regras.py` — `Dif. Contrato x Compra` é recalculada na aplicação das regras para nunca exibir valor negativo; quando o contrato é maior que a compra empresa, a diferença fica `0,00`.
+- `pages/1_Importação.py` e `pages/4_Histórico.py` — auditorias carregadas do banco agora são recalculadas com as regras atuais, evitando continuar exibindo divergências antigas já corrigidas.
+
+### V1.4.05 — 2026-05-05
+**Contrato Adm. em telas/exports + divergência positiva no contrato**
+- `app/processamento.py` — `ler_contratos`: suporte opcional à coluna `Contrato Adm.` por detecção de nome.
+- `app/processamento.py` — `cruzar`: campo `Contrato Adm.` adicionado ao resultado da auditoria e às inclusões; `Dif. Contrato x Compra` agora só mostra valor positivo quando a compra empresa excede o contrato.
+- `app/regras.py` — regra R5 ajustada para sinalizar apenas quando `Valor Empresa (Compra)` é maior que `Valor Contrato`.
+- `pages/1_Importação.py` — painel de colunas detectadas passa a mostrar `Contrato Adm.` quando existir no arquivo de contratos.
+- `pages/2_Auditoria.py` — novo filtro por `Contrato Adm.` e coluna exibida na tabela da auditoria.
+- `pages/3_Inclusões.py` — coluna `Contrato Adm.` adicionada na aba de inclusões, com filtros de `Departamento` e `Contrato Adm.`.
+- `app/exportacao.py` — `Contrato Adm.` incluído nas abas `Auditoria` e `Inclusões do Mês` do Excel.
+
+### V1.4.04 — 2026-05-05
+**Correções de leitura da fatura + inclusões por período de referência**
+- `app/processamento.py` — `_ler_planilha`: CSV agora também detecta automaticamente a linha correta de cabeçalho, evitando faturas lidas com cabeçalho errado e totais zerados.
+- `app/processamento.py` — `ler_fatura_csv`: valida colunas obrigatórias da fatura e falha com erro explícito quando não encontra linhas válidas de `Conta médica` ou `Mensalidade/Contribuição Saúde`.
+- `app/processamento.py` — normalização de texto ajustada para reconhecer descrições com encoding quebrado, como `Conta mÃ©dica` e `Mensalidade/ContribuiÃ§Ã£o SaÃºde`.
+- `app/processamento.py` — `Data Inclusão` passa a considerar apenas linhas de titular.
+- `app/regras.py` — filtro de inclusões do mês agora aceita período manual em `MM/AA` ou `MM/AAAA` e compara datas como `05/04/26` corretamente.
+- `pages/1_Importação.py` — campo de período atualizado para aceitar `04/26` e `04/2026`.
+
 ### V1.4.03 — 2026-05-05
 **Correção crítica: filtro de descrição da fatura era parcial, somava linhas erradas**
 - `app/processamento.py` — `ler_fatura_csv`: substituído filtro por substring (muito amplo) por

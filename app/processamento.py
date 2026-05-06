@@ -15,7 +15,13 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 def _norm(s) -> str:
-    txt = str(s or "").upper().strip()
+    txt = str(s or "").strip().strip("\"'")
+    if any(ch in txt for ch in ("Ã", "Â", "¢", "€", "™")):
+        try:
+            txt = txt.encode("latin-1").decode("utf-8")
+        except Exception:
+            pass
+    txt = txt.upper()
     nfkd = unicodedata.normalize("NFKD", txt)
     return " ".join("".join(c for c in nfkd if not unicodedata.combining(c)).split())
 
@@ -36,43 +42,76 @@ def _col_por_indice(df: pd.DataFrame, idx: int) -> Optional[str]:
     return None
 
 
-def _ler_planilha(path) -> pd.DataFrame:
+def _cabecalho_util(df: pd.DataFrame) -> bool:
+    if df.empty or len(df.columns) < 2:
+        return False
+    named = sum(1 for c in df.columns if not str(c).lower().startswith("unnamed"))
+    return named >= 2
+
+
+def _score_cabecalho(df: pd.DataFrame, grupos_keywords: list[tuple[str, ...]] | None = None) -> int:
+    if not _cabecalho_util(df):
+        return -1
+    if not grupos_keywords:
+        return 0
+
+    score = 0
+    for grupo in grupos_keywords:
+        if _encontrar_col(df, *grupo):
+            score += 1
+    return score
+
+
+def _ler_planilha(path, grupos_keywords: list[tuple[str, ...]] | None = None) -> pd.DataFrame:
     """
     Lê CSV ou Excel com detecção automática de cabeçalho.
     Planilhas de RH frequentemente têm linhas de título antes dos dados —
     testa até a 8ª linha até encontrar colunas com nomes reais.
     """
     p = Path(path)
+    melhor_df = None
+    melhor_score = -1
 
     if p.suffix.lower() in (".xlsx", ".xls"):
         for header_row in range(9):
             try:
                 df = pd.read_excel(p, dtype=str, header=header_row)
                 df = df.dropna(how="all").dropna(how="all", axis=1)
-                if df.empty or len(df.columns) < 2:
-                    continue
-                # Considera bom se ao menos 2 colunas têm nomes reais (não "Unnamed")
-                named = sum(1 for c in df.columns
-                            if not str(c).lower().startswith("unnamed"))
-                if named >= 2:
-                    return df
+                score = _score_cabecalho(df, grupos_keywords)
+                if score > melhor_score:
+                    melhor_df = df
+                    melhor_score = score
             except Exception:
                 continue
+        if melhor_df is not None and (melhor_score > 0 or grupos_keywords is None):
+            return melhor_df
         raise ValueError(f"Não foi possível encontrar o cabeçalho em '{p.name}'. "
                          "Verifique se o arquivo não está protegido ou corrompido.")
 
-    # CSV — tenta encodings e separadores comuns
+    # CSV — também tenta encontrar o cabeçalho correto, porque alguns exports
+    # chegam com linhas introdutórias antes dos nomes das colunas.
     for enc in ("latin-1", "cp1252", "utf-8-sig", "utf-8"):
         for sep in (";", ",", "\t", "|"):
-            try:
-                df = pd.read_csv(p, encoding=enc, sep=sep, dtype=str,
-                                 skip_blank_lines=True, on_bad_lines="skip")
-                if len(df.columns) >= 2:
+            for header_row in range(9):
+                try:
+                    df = pd.read_csv(
+                        p,
+                        encoding=enc,
+                        sep=sep,
+                        dtype=str,
+                        header=header_row,
+                        skip_blank_lines=True,
+                        on_bad_lines="skip",
+                    )
                     df = df.dropna(how="all").dropna(how="all", axis=1)
-                    if not df.empty:
-                        return df
-            except Exception:
-                continue
+                    score = _score_cabecalho(df, grupos_keywords)
+                    if score > melhor_score:
+                        melhor_df = df
+                        melhor_score = score
+                except Exception:
+                    continue
+    if melhor_df is not None and (melhor_score > 0 or grupos_keywords is None):
+        return melhor_df
     raise ValueError(f"Não foi possível ler '{p.name}'.")
 
 
@@ -119,46 +158,53 @@ _CONTRATOS_INELEGIVEIS = {
 
 def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
     """
-    Colunas mapeadas pela Graziella (posição-fallback se keyword não bater):
-      D (idx 3)  = Funcionário
-      G (idx 6)  = Departamento
-      H (idx 7)  = Admissão
-      L (idx 11) = Valor Plano
+    Lê contratos usando apenas a nomenclatura das colunas.
     """
-    df = _ler_planilha(path)
+    df = _ler_planilha(path, [
+        ("funcionario", "funcionária", "nome funcionario", "nome da funcionária"),
+        ("departamento", "depto", "setor", "unidade", "lotação"),
+        ("valor plano", "vlr plano", "mensalidade titular", "valor mensal titular"),
+        ("admissao", "dt. admissao", "admissão", "dt adm"),
+        ("contrato adm", "contrato administrativo", "tipo contrato"),
+    ])
     col_map = col_map or {}
 
-    def col(key, fallback_idx, *defs):
+    def col(key, *defs):
         # 1. mapeamento explícito salvo
         if col_map.get(key):
             return col_map[key]
         # 2. detecção por keyword no nome da coluna
-        encontrado = _encontrar_col(df, *defs)
-        if encontrado:
-            return encontrado
-        # 3. fallback pela posição informada pela usuária
-        return _col_por_indice(df, fallback_idx)
+        return _encontrar_col(df, *defs)
 
     c = {
-        "cod_func":     col("cod_func",    0,
-                            "cod. func", "cod func", "codigo", "matricula",
-                            "cód. funcionário", "num func", "cod. funcionario"),
-        "funcionario":  col("funcionario", 3,   # coluna D
-                            "funcionario", "nome", "colaborador", "empregado",
-                            "nome funcionario", "nome do funcionario"),
-        "departamento": col("departamento", 6,  # coluna G
+        "cod_func":     col("cod_func",
+                            "cod. func", "cod func", "codigo", "código", "matricula",
+                            "matrícula", "cód. funcionário", "num func", "cod. funcionario",
+                            "chapa", "id funcionario", "id funcionário"),
+        "funcionario":  col("funcionario",
+                            "funcionario", "funcionária", "nome", "colaborador", "empregado",
+                            "nome funcionario", "nome do funcionario", "nome da funcionaria",
+                            "nome da funcionária", "nome colaborador", "nome empregado"),
+        "departamento": col("departamento",
                             "departamento", "depto", "setor", "centro de custo",
-                            "centro custo", "lotacao", "lotação", "departamento"),
-        "vlr_contrato": col("vlr_contrato", 11, # coluna L
+                            "centro custo", "lotacao", "lotação", "unidade", "local"),
+        "vlr_contrato": col("vlr_contrato",
                             "valor plano", "vlr plano", "plano saude", "plano de saude",
                             "vl. plano", "vl plano", "valor ps", "saude",
-                            "mensalidade", "vlr. plano", "ps titular", "plano"),
-        "admissao":     col("admissao",    7,   # coluna H
+                            "mensalidade", "vlr. plano", "ps titular", "plano",
+                            "valor mensal", "mensal titular", "mensalidade titular",
+                            "valor titular", "valor mensal titular"),
+        "admissao":     col("admissao",
                             "admissao", "dt. admissao", "data admissao", "data admissão",
-                            "dt admissao", "dt. admissão", "admissão"),
-        "demissao":     col("demissao",    -1,  # sem posição conhecida
+                            "dt admissao", "dt. admissão", "admissão", "dt adm", "data adm"),
+        "contrato_adm": col("contrato_adm",
+                            "contrato adm", "contrato administrativo", "contrato adm.",
+                            "contr. adm", "contrato adm/", "contrato adm ",
+                            "tipo contrato", "contrato administrativo/adm"),
+        "demissao":     col("demissao",
                             "demissao", "dt. demissao", "data demissao", "data demissão",
-                            "dt demissao", "demissão", "rescisao", "desligamento"),
+                            "dt demissao", "demissão", "rescisao", "rescisão", "desligamento",
+                            "data desligamento"),
     }
 
     rows = []
@@ -182,6 +228,7 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             "funcionario":  func,
             "_norm_func":   _norm(func),
             "departamento": _str(row.get(c["departamento"]) if c["departamento"] else ""),
+            "contrato_adm": _str(row.get(c["contrato_adm"]) if c["contrato_adm"] else ""),
             "tem_direito":  tem_direito,
             "vlr_contrato": vlr,
             "admissao":     admissao,
@@ -192,7 +239,13 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
 
 
 def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
-    df = _ler_planilha(path)
+    df = _ler_planilha(path, [
+        ("titular", "beneficiario", "nome"),
+        ("categoria", "tipo"),
+        ("descricao", "descrição", "item"),
+        ("valor", "vl.", "preco"),
+        ("data inclusao", "data de inclusao", "dt. inclusao"),
+    ])
     col_map = col_map or {}
 
     def col(key, *defs):
@@ -208,7 +261,20 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
         "nascimento":    col("nascimento",     "nascimento", "data nasc", "dt nasc", "data de nascimento"),
     }
 
+    obrigatorias = {
+        "titular": "Titular/Beneficiário",
+        "descricao": "Descrição",
+        "valor": "Valor",
+    }
+    faltando = [rotulo for key, rotulo in obrigatorias.items() if not c.get(key)]
+    if faltando:
+        raise ValueError(
+            "Coluna(s) obrigatória(s) não encontrada(s) na fatura: "
+            + ", ".join(faltando)
+        )
+
     titulares: dict = {}
+    linhas_validas = 0
 
     for _, row in df.iterrows():
         nome_raw = _str(row.get(c["titular"]) if c["titular"] else "")
@@ -227,6 +293,8 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
 
         if not (eh_conta_medica or eh_mensalidade_s):
             continue
+
+        linhas_validas += 1
 
         categ_raw = _str(row.get(c["categoria"]) if c["categoria"] else "")
         categ_n   = _norm(categ_raw).upper()
@@ -250,11 +318,12 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
                 "vlr_mensalidade": 0.0,
                 "vlr_dependente":  0.0,
                 "vlr_copart":      0.0,
-                "data_inclusao":   data_inc,
+                # Inclusões do mês devem considerar apenas o titular.
+                "data_inclusao":   data_inc if eh_titular else "",
             }
         else:
-            # Preenche data_inclusao e nascimento se ainda vazio
-            if data_inc and not titulares[nome_norm]["data_inclusao"]:
+            # Preenche data_inclusao apenas a partir da linha do titular.
+            if eh_titular and data_inc and not titulares[nome_norm]["data_inclusao"]:
                 titulares[nome_norm]["data_inclusao"] = data_inc
             if nasc and not titulares[nome_norm]["nascimento"]:
                 titulares[nome_norm]["nascimento"] = nasc
@@ -265,6 +334,13 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
             titulares[nome_norm]["vlr_dependente"] += valor
         else:
             titulares[nome_norm]["vlr_copart"] += valor
+
+    if linhas_validas == 0:
+        raise ValueError(
+            "Nenhuma linha válida de fatura encontrada. "
+            "Verifique se a coluna de descrição contém 'Mensalidade/Contribuição Saúde' "
+            "ou 'Conta médica'."
+        )
 
     rows = []
     for nome_norm, d in titulares.items():
@@ -303,13 +379,19 @@ def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
         )
 
     partes = []
+    falhas = []
     for p in paths:
         try:
             df_parte = ler_fatura_csv(p, col_map)
             if not df_parte.empty:
                 partes.append(df_parte)
-        except Exception:
-            continue
+        except Exception as exc:
+            falhas.append(f"{Path(p).name}: {exc}")
+
+    if falhas:
+        raise ValueError(
+            "Erro ao ler a(s) fatura(s): " + " | ".join(falhas)
+        )
 
     if not partes:
         return pd.DataFrame(
@@ -319,6 +401,21 @@ def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
         )
 
     df_all = pd.concat(partes, ignore_index=True)
+
+    # Alguns uploads trazem o mesmo titular repetido de forma idêntica em mais de
+    # um arquivo. Antes de consolidar por nome, removemos duplicatas exatas para
+    # evitar dobrar a cobrança do mesmo conjunto de valores.
+    df_all = df_all.drop_duplicates(
+        subset=[
+            "_norm_fatura",
+            "nascimento_fat",
+            "vlr_fatura",
+            "vlr_mensalidade",
+            "vlr_dependente",
+            "vlr_copart",
+            "data_inclusao",
+        ]
+    )
 
     # Consolida: mesma pessoa em arquivos diferentes → soma valores, mantém 1ª data de inclusão
     df_cons = (
@@ -341,39 +438,46 @@ def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
 
 def ler_compra(path, col_map: dict = None) -> pd.DataFrame:
     """
-    Lê planilha de compras e agrupa por funcionário.
+    Lê planilha de compras e agrupa por funcionário usando apenas a nomenclatura.
     Cada funcionário pode ter múltiplas linhas (titular + dependentes).
-    - vlr_empresa (col K): parcela da empresa → comparada com valor do contrato
-    - vlr_func   (col L): parcela do beneficiário
+    - vlr_empresa: parcela da empresa → comparada com valor do contrato
+    - vlr_func   : parcela do beneficiário
     - vlr_compra_total   : soma de TODAS as linhas (empresa + func) → comparada com fatura
     """
-    df = _ler_planilha(path)
+    df = _ler_planilha(path, [
+        ("funcionario", "funcionária", "nome funcionario", "titular"),
+        ("valor empresa", "valor mensal empresa", "mensalidade empresa", "patronal", "custo empresa"),
+        ("valor beneficiario", "valor funcionario", "mensalidade funcionario", "desconto funcionario"),
+        ("cod. func", "codigo", "matricula", "chapa"),
+    ])
     col_map = col_map or {}
 
-    def col(key, fallback_idx, *defs):
+    def col(key, *defs):
         if col_map.get(key):
             return col_map[key]
-        encontrado = _encontrar_col(df, *defs)
-        if encontrado:
-            return encontrado
-        return _col_por_indice(df, fallback_idx)
+        return _encontrar_col(df, *defs)
 
     c = {
-        "cod_func":    col("cod_func",    -1,
-                           "cod. func", "cod func", "codigo", "matricula",
-                           "cód. funcionário", "num func"),
-        "funcionario": col("funcionario", 5,   # coluna F
-                           "funcionario", "nome", "colaborador", "empregado",
-                           "nome do funcionario", "nome funcionario"),
-        "vlr_empresa": col("vlr_empresa", 10,  # coluna K
+        "cod_func":    col("cod_func",
+                           "cod. func", "cod func", "codigo", "código", "matricula",
+                           "matrícula", "cód. funcionário", "num func", "chapa"),
+        "funcionario": col("funcionario",
+                           "funcionario", "funcionária", "nome", "colaborador", "empregado",
+                           "nome do funcionario", "nome funcionario", "nome da funcionaria",
+                           "nome da funcionária", "titular", "beneficiario titular"),
+        "vlr_empresa": col("vlr_empresa",
                            "valor empresa", "vlr empresa", "empresa", "valor emp",
-                           "vl. empresa", "emp", "patronal", "empresa ps",
-                           "val empresa", "val. empresa"),
-        "vlr_func":    col("vlr_func",    11,  # coluna L
+                            "vl. empresa", "emp", "patronal", "empresa ps",
+                           "val empresa", "val. empresa", "valor mensal empresa",
+                           "valor titular empresa", "mensalidade empresa", "mensal empresa",
+                           "custo empresa", "custo patronal"),
+        "vlr_func":    col("vlr_func",
                            "valor beneficiario", "vlr beneficiario", "beneficiario",
-                           "valor funcionario", "vlr funcionario",
-                           "vl. beneficiario", "func ps", "val funcionario",
-                           "val. funcionario"),
+                            "valor funcionario", "vlr funcionario",
+                            "vl. beneficiario", "func ps", "val funcionario",
+                           "val. funcionario", "valor mensal funcionario",
+                           "mensalidade funcionario", "mensal funcionario",
+                           "custo funcionario", "desconto funcionario", "desconto beneficiario"),
     }
 
     # Lê todas as linhas brutas
@@ -491,6 +595,7 @@ def cruzar(df_cont: pd.DataFrame,
         resultado.append({
             "Funcionário":        cont["funcionario"],
             "Departamento":       cont["departamento"],
+            "Contrato Adm.":      cont.get("contrato_adm", ""),
             "Cod. Funcionário":   cont["cod_func"],
             "Tem Direito":        "Sim" if cont["tem_direito"] else "Não",
             "Está na Fatura":     "Sim" if na_fatura else "Não",
@@ -499,7 +604,7 @@ def cruzar(df_cont: pd.DataFrame,
             "Valor Empresa (Compra)": vlr_emp,      # comparar com contrato
             "Valor Compra Total": vlr_comp_tot,     # comparar com fatura
             "Valor Contrato":     cont["vlr_contrato"],
-            "Dif. Contrato x Compra": round(vlr_emp - cont["vlr_contrato"], 2),
+            "Dif. Contrato x Compra": round(max(vlr_emp - cont["vlr_contrato"], 0.0), 2),
             "Dif. Fatura x Compra":   round(vlr_fat - vlr_comp_tot, 2),
             "Data Inclusão":      data_inc,
             "Dt. Admissão":       cont.get("admissao", ""),
@@ -529,6 +634,7 @@ def cruzar(df_cont: pd.DataFrame,
         resultado.append({
             "Funcionário":            fat["nome_fatura"],
             "Departamento":           "",
+            "Contrato Adm.":          "",
             "Cod. Funcionário":       "",
             "Tem Direito":            "—",
             "Está na Fatura":         "Sim",
@@ -556,6 +662,7 @@ def cruzar(df_cont: pd.DataFrame,
         resultado.append({
             "Funcionário":            comp["nome_compra"],
             "Departamento":           "",
+            "Contrato Adm.":          "",
             "Cod. Funcionário":       comp.get("cod_func_compra", ""),
             "Tem Direito":            "—",
             "Está na Fatura":         "Não",

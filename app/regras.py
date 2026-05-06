@@ -5,11 +5,46 @@ Regras de auditoria Unimed.
 import pandas as pd
 
 
+def _parse_periodo(periodo: str) -> tuple[int, int] | tuple[None, None]:
+    s = str(periodo or "").strip()
+    if "/" not in s:
+        return None, None
+
+    try:
+        mes_txt, ano_txt = [p.strip() for p in s.split("/", 1)]
+        mes = int(mes_txt)
+        ano = int(ano_txt)
+    except ValueError:
+        return None, None
+
+    if not 1 <= mes <= 12:
+        return None, None
+
+    if ano < 100:
+        ano += 2000
+
+    return mes, ano
+
+
 def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
     df = df.copy()
+
+    if {"Valor Empresa (Compra)", "Valor Contrato"}.issubset(df.columns):
+        df["Dif. Contrato x Compra"] = df.apply(
+            lambda row: round(
+                max(
+                    float(row.get("Valor Empresa (Compra)", 0) or 0)
+                    - float(row.get("Valor Contrato", 0) or 0),
+                    0.0,
+                ),
+                2,
+            ),
+            axis=1,
+        )
+
     status_list, desc_list, acao_list = [], [], []
 
     for _, row in df.iterrows():
@@ -46,9 +81,9 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
             inc.append("Lançado na compra mas não consta na fatura Unimed")
             acoes.append("Verificar se lançamento é indevido ou se fatura está incompleta")
 
-        # R5 — Valor empresa (compra) difere do valor do contrato
+        # R5 — Valor empresa (compra) maior que o valor do contrato
         if na_compra and vlr_cont > 0 and vlr_emp > 0:
-            dif_cont = abs(vlr_emp - vlr_cont)
+            dif_cont = vlr_emp - vlr_cont
             if dif_cont > 0.10:
                 inc.append(
                     f"Valor empresa na compra (R$ {vlr_emp:.2f}) difere do contrato "
@@ -100,15 +135,19 @@ def identificar_duplicatas_fatura(df_fat: pd.DataFrame) -> pd.DataFrame:
 def identificar_incluidos_mes(df: pd.DataFrame, periodo: str) -> pd.DataFrame:
     if df.empty or "Data Inclusão" not in df.columns or not periodo:
         return pd.DataFrame()
-    try:
-        mes, ano = periodo.split("/")
-    except ValueError:
+
+    mes, ano = _parse_periodo(periodo)
+    if mes is None or ano is None:
         return pd.DataFrame()
 
     def eh_do_mes(dt_str):
         s = str(dt_str or "").strip()
-        return (len(s) == 10 and s[2] == "/" and s[5] == "/"
-                and s[3:5] == mes and s[6:] == ano)
+        if not s:
+            return False
+        dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if pd.isna(dt):
+            dt = pd.to_datetime(s, errors="coerce")
+        return not pd.isna(dt) and dt.month == mes and dt.year == ano
 
     return df[df["Data Inclusão"].apply(eh_do_mes)].copy()
 
