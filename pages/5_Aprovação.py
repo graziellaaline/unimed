@@ -13,9 +13,34 @@ st.set_page_config(page_title="Aprovação — Auditoria Unimed", layout="wide")
 barra_lateral()
 st.header("5 · Aprovação de Pendências")
 
-if "df_audit" not in st.session_state:
-    st.warning("Nenhuma auditoria carregada. Acesse **1 · Importação** ou **4 · Histórico**.")
-    st.stop()
+# ── Auto-carregar do banco se sessão estiver vazia ────────────────────────────
+if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:
+    _ultimos = db.listar_periodos()          # já ordenado por processado_em DESC
+    if _ultimos:
+        _ult = _ultimos[0]                   # mais recente em absoluto
+        with st.spinner(f"Carregando auditoria {_ult['periodo']}…"):
+            from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
+            _df, _stats, _meta = db.carregar_auditoria(_ult["periodo"], _ult["cliente"])
+        if _df is not None and not _df.empty:
+            _df = aplicar_regras(_df)
+            _aid = (_meta or {}).get("id") or _ult.get("id")
+            _arqs = db.carregar_arquivos_auditoria(_aid) if _aid else {}
+            st.session_state.update({
+                "df_audit":      _df,
+                "df_inc":        identificar_incluidos_mes(_df, _ult["periodo"]),
+                "stats":         calcular_stats(_df),
+                "periodo":       _ult["periodo"],
+                "cliente":       _ult["cliente"],
+                "auditoria_id":  _aid,
+                "arquivos_fontes": _arqs,
+            })
+            st.rerun()
+        else:
+            st.warning("Nenhuma auditoria encontrada no banco. Acesse **1 · Importação**.")
+            st.stop()
+    else:
+        st.warning("Nenhuma auditoria carregada. Acesse **1 · Importação**.")
+        st.stop()
 
 df      = st.session_state["df_audit"]
 aid     = st.session_state.get("auditoria_id")
@@ -47,8 +72,20 @@ if pendentes.empty:
 
 
 # ── Justificativas salvas ─────────────────────────────────────────────────────
+def _carregar_justificativas_ativas() -> dict:
+    """
+    Carrega justificativas com dupla busca:
+    1. Pelo auditoria_id da sessão
+    2. Fallback por período com cliente='' (cobre variações de case no nome do cliente)
+    """
+    resultado = db.carregar_justificativas(aid) if aid else {}
+    if not resultado and periodo:
+        _, resultado = db.carregar_justificativas_por_periodo(periodo, "")
+    return resultado
+
+
 def _aplicar_modelos_exatos(salvar_no_banco=True):
-    atuais = db.carregar_justificativas(aid) if aid else {}
+    atuais = _carregar_justificativas_ativas()
     aplicadas = 0
     for _, row in pendentes.iterrows():
         func = str(row.get("Funcionário", ""))

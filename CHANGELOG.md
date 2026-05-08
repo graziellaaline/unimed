@@ -12,6 +12,22 @@
 
 ## Histórico
 
+### V1.5.17 — 2026-05-08
+**Auditoria: coluna Justificado, filtro e cor azul para linhas já justificadas**
+- `pages/2_Auditoria.py` — carrega justificativas do banco (por `auditoria_id` ou fallback por período) e adiciona coluna `Justificado` (Sim/Não) a cada linha.
+- Filtro `Justificado` adicionado à seção de filtros para isolar apenas pendências já justificadas ou ainda abertas.
+- Coloração: Inconsistente **justificado** → 🔵 azul (`#cce5ff`); Inconsistente **pendente** → 🔴 vermelho; OK → 🟢 verde.
+
+### V1.5.16 — 2026-05-08
+**Correção crítica: justificativas não apareciam por diferença de case no nome do cliente**
+- `app/db.py` — `listar_periodos()`: adicionado `MAX(processado_em) DESC` como ordenação secundária; antes retornava o grupo `"SETRATA"` (ID 21, sem justificativas) antes de `"Setrata"` (ID 22, com 19 justificativas), pois ambos são grupos distintos no GROUP BY.
+- `pages/5_Aprovação.py` — `_carregar_justificativas_ativas()`: fallback por período usa `cliente=""` em vez do cliente da sessão — cobre variações de case (`"Setrata"` vs `"SETRATA"`).
+
+### V1.5.15 — 2026-05-08
+**Auto-carregamento: Auditoria e Aprovação carregam do banco automaticamente ao abrir**
+- `pages/2_Auditoria.py` e `pages/5_Aprovação.py` — ao abrir qualquer uma das abas com sessão vazia (após reinício do app), o sistema busca automaticamente a última auditoria do banco e popula a sessão sem exigir passagem pela Importação.
+- Elimina a mensagem "Nenhuma auditoria carregada" após reinícios do app.
+
 ### V1.5.14 — 2026-05-08
 **Aprovação: recuperação automática de justificativas mesmo com sessão resetada**
 - `app/db.py` — nova função `carregar_justificativas_por_periodo()`: busca as justificativas do audit mais recente do período que tenha dados salvos — fallback quando `auditoria_id` da sessão aponta para audit sem justificativas.

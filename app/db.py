@@ -128,7 +128,7 @@ def listar_periodos(cliente: str = "") -> list:
     cur.execute(
         "SELECT MAX(id) AS id, periodo, cliente, MAX(processado_em) AS ultimo, COUNT(*) AS versoes "
         "FROM auditorias WHERE (cliente=? OR ?='') "
-        "GROUP BY periodo, cliente ORDER BY periodo DESC",
+        "GROUP BY periodo, cliente ORDER BY periodo DESC, MAX(processado_em) DESC",
         (cliente, cliente)
     )
     rows = cur.fetchall()

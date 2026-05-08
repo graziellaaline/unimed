@@ -14,14 +14,48 @@ st.set_page_config(page_title="Auditoria — Unimed", layout="wide")
 barra_lateral()
 st.header("2 · Resultado da Auditoria")
 
+# ── Auto-carregar do banco se sessão estiver vazia ────────────────────────────
 if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:
-    st.warning("Nenhuma auditoria carregada. Acesse **1 · Importação** ou **4 · Histórico**.")
-    st.stop()
+    _ultimos = db.listar_periodos()          # já ordenado por processado_em DESC
+    if _ultimos:
+        _ult = _ultimos[0]                   # mais recente em absoluto
+        with st.spinner(f"Carregando auditoria {_ult['periodo']}…"):
+            from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
+            _df, _stats, _meta = db.carregar_auditoria(_ult["periodo"], _ult["cliente"])
+        if _df is not None and not _df.empty:
+            _df = aplicar_regras(_df)
+            _aid = (_meta or {}).get("id") or _ult.get("id")
+            _arqs = db.carregar_arquivos_auditoria(_aid) if _aid else {}
+            st.session_state.update({
+                "df_audit":        _df,
+                "df_inc":          identificar_incluidos_mes(_df, _ult["periodo"]),
+                "stats":           calcular_stats(_df),
+                "periodo":         _ult["periodo"],
+                "cliente":         _ult["cliente"],
+                "auditoria_id":    _aid,
+                "arquivos_fontes": _arqs,
+            })
+            st.rerun()
+        else:
+            st.warning("Nenhuma auditoria encontrada. Acesse **1 · Importação**.")
+            st.stop()
+    else:
+        st.warning("Nenhuma auditoria carregada. Acesse **1 · Importação**.")
+        st.stop()
 
 df      = st.session_state["df_audit"].copy()
 stats   = st.session_state.get("stats", {})
 periodo = st.session_state.get("periodo", "")
 cliente = st.session_state.get("cliente", "")
+
+# ── Justificativas (para coluna Justificado e cor azul) ──────────────────────
+_aid_aud = st.session_state.get("auditoria_id")
+_just_aud = db.carregar_justificativas(_aid_aud) if _aid_aud else {}
+if not _just_aud and periodo:
+    _, _just_aud = db.carregar_justificativas_por_periodo(periodo, "")
+df["Justificado"] = df["Funcionário"].map(
+    lambda f: "Sim" if _just_aud.get(f, "").strip() else "Não"
+)
 
 st.subheader(f"Período: {periodo}" + (f" · {cliente}" if cliente else ""))
 
@@ -48,7 +82,7 @@ graficos_container = st.container()
 # ── Filtros ───────────────────────────────────────────────────────────────────
 with st.expander("🔍 Filtros", expanded=True):
     f1, f2, f3, f4 = st.columns(4)
-    f5, f6, f7 = st.columns(3)
+    f5, f6, f7, f8 = st.columns(4)
 
     status_vals = ["Todos"] + sorted(df["Status"].dropna().unique().tolist())
     f_status = f1.selectbox("Status", status_vals)
@@ -71,8 +105,9 @@ with st.expander("🔍 Filtros", expanded=True):
     f_nome = f5.text_input("Funcionário (parte do nome)")
 
     inc_opts = ["Todos", "Sim", "Não"]
-    f_fatura = f6.selectbox("Está na Fatura", inc_opts)
-    f_compra = f7.selectbox("Está na Compra", inc_opts)
+    f_fatura      = f6.selectbox("Está na Fatura", inc_opts)
+    f_compra      = f7.selectbox("Está na Compra", inc_opts)
+    f_justificado = f8.selectbox("Justificado", ["Todos", "Sim", "Não"])
 
 df_f = df.copy()
 if f_status != "Todos":
@@ -89,6 +124,8 @@ if f_fatura != "Todos":
     df_f = df_f[df_f["Está na Fatura"] == f_fatura]
 if f_compra != "Todos":
     df_f = df_f[df_f["Está na Compra"] == f_compra]
+if f_justificado != "Todos" and "Justificado" in df_f.columns:
+    df_f = df_f[df_f["Justificado"] == f_justificado]
 
 st.caption(f"**{len(df_f)}** registro(s) exibido(s)")
 
@@ -189,7 +226,7 @@ COLS_EX = [
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
     "Dif. Contrato x Compra", "Dif. Fatura x Compra",
     "Data Inclusão",
-    "Status", "Inconsistência", "Ação Sugerida",
+    "Status", "Justificado", "Inconsistência", "Ação Sugerida",
 ]
 cols_ok = [c for c in COLS_EX if c in df_f.columns]
 
@@ -203,10 +240,13 @@ for col in ["Valor Fatura", "Valor Empresa (Compra)", "Valor Compra Total",
 
 def _cor_linha(row):
     s = row.get("Status", "")
+    j = row.get("Justificado", "Não")
+    if s == "Inconsistente" and j == "Sim":
+        return ["background-color:#cce5ff"] * len(row)   # azul = justificado
     if s == "Inconsistente":
-        return ["background-color:#f8d7da"] * len(row)
+        return ["background-color:#f8d7da"] * len(row)   # vermelho = pendente
     if s == "OK":
-        return ["background-color:#d4edda"] * len(row)
+        return ["background-color:#d4edda"] * len(row)   # verde = ok
     return [""] * len(row)
 
 st.dataframe(
