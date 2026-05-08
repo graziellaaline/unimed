@@ -7,11 +7,13 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+import shutil
 
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH  = BASE_DIR / "dados" / "historico.db"
+UPLOADS_DIR = BASE_DIR / "dados" / "uploads"
 
 
 def _conn():
@@ -41,6 +43,15 @@ def _garantir_tabelas():
             criado_em     TEXT,
             FOREIGN KEY (auditoria_id) REFERENCES auditorias(id)
         );
+        CREATE TABLE IF NOT EXISTS justificativas_modelo (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente       TEXT    DEFAULT '',
+            funcionario   TEXT,
+            descricao     TEXT,
+            justificativa TEXT,
+            atualizado_em TEXT,
+            UNIQUE (cliente, funcionario, descricao) ON CONFLICT REPLACE
+        );
         CREATE TABLE IF NOT EXISTS mapeamentos (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             cliente       TEXT    NOT NULL,
@@ -48,6 +59,15 @@ def _garantir_tabelas():
             mapa_json     TEXT,
             atualizado_em TEXT,
             UNIQUE (cliente, tipo) ON CONFLICT REPLACE
+        );
+        CREATE TABLE IF NOT EXISTS arquivos_auditoria (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            auditoria_id  INTEGER NOT NULL,
+            tipo          TEXT    NOT NULL,
+            nome_original TEXT,
+            caminho       TEXT    NOT NULL,
+            criado_em     TEXT,
+            FOREIGN KEY (auditoria_id) REFERENCES auditorias(id)
         );
     """)
     con.commit()
@@ -128,6 +148,56 @@ def aprovar_auditoria(auditoria_id: int):
     con.close()
 
 
+def salvar_arquivos_auditoria(auditoria_id: int, arquivos: dict):
+    """
+    arquivos = {
+      "contratos": [{"nome": "x.xlsx", "origem": "c:/tmp/x.xlsx"}],
+      "fatura": [...],
+      "compra": [...]
+    }
+    """
+    base = UPLOADS_DIR / f"auditoria_{auditoria_id}"
+    base.mkdir(parents=True, exist_ok=True)
+
+    con = _conn()
+    con.execute("DELETE FROM arquivos_auditoria WHERE auditoria_id=?", (auditoria_id,))
+
+    for tipo, itens in (arquivos or {}).items():
+        for i, item in enumerate(itens or [], start=1):
+            origem = Path(item["origem"])
+            nome_original = item["nome"]
+            destino = base / f"{tipo}_{i}_{origem.name}"
+            shutil.copy2(origem, destino)
+            con.execute(
+                "INSERT INTO arquivos_auditoria (auditoria_id, tipo, nome_original, caminho, criado_em) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (auditoria_id, tipo, nome_original, str(destino), datetime.now().isoformat())
+            )
+
+    con.commit()
+    con.close()
+
+
+def carregar_arquivos_auditoria(auditoria_id: int) -> dict:
+    con = _conn()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT tipo, nome_original, caminho FROM arquivos_auditoria WHERE auditoria_id=? ORDER BY id",
+        (auditoria_id,)
+    )
+    rows = cur.fetchall()
+    con.close()
+
+    out = {"contratos": [], "fatura": [], "compra": []}
+    for tipo, nome_original, caminho in rows:
+        if Path(caminho).exists():
+            out.setdefault(tipo, []).append({
+                "nome": nome_original,
+                "caminho": caminho,
+            })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Justificativas
 # ---------------------------------------------------------------------------
@@ -160,6 +230,32 @@ def carregar_justificativas(auditoria_id: int) -> dict:
     rows = cur.fetchall()
     con.close()
     return {r[0]: r[1] for r in rows}
+
+
+def salvar_justificativa_modelo(cliente: str, funcionario: str,
+                                descricao: str, justificativa: str):
+    con = _conn()
+    con.execute(
+        "INSERT OR REPLACE INTO justificativas_modelo (cliente, funcionario, descricao, justificativa, atualizado_em) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (cliente or "", funcionario, descricao, justificativa, datetime.now().isoformat())
+    )
+    con.commit()
+    con.close()
+
+
+def carregar_justificativa_modelo(cliente: str, funcionario: str, descricao: str) -> str:
+    con = _conn()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT justificativa FROM justificativas_modelo "
+        "WHERE (cliente=? OR cliente='') AND funcionario=? AND descricao=? "
+        "ORDER BY CASE WHEN cliente=? THEN 0 ELSE 1 END, atualizado_em DESC LIMIT 1",
+        (cliente or "", funcionario, descricao, cliente or "")
+    )
+    row = cur.fetchone()
+    con.close()
+    return row[0] if row else ""
 
 
 # ---------------------------------------------------------------------------

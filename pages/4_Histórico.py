@@ -46,6 +46,7 @@ if btn:
         df_loaded = aplicar_regras(df_loaded)
         stats = calcular_stats(df_loaded)
         df_inc = identificar_incluidos_mes(df_loaded, periodo_sel)
+        arquivos_fontes = db.carregar_arquivos_auditoria(meta.get("id")) if meta.get("id") else {}
         st.session_state.update({
             "df_audit":     df_loaded,
             "df_inc":       df_inc,
@@ -53,6 +54,7 @@ if btn:
             "periodo":      periodo_sel,
             "cliente":      cliente_sel,
             "auditoria_id": meta.get("id"),
+            "arquivos_fontes": arquivos_fontes,
         })
         proc = (meta.get("processado_em") or "")[:16].replace("T", " às ")
         aprv = "✅ Aprovada" if meta.get("aprovado") else "⏳ Pendente"

@@ -12,6 +12,91 @@
 
 ## Histórico
 
+### V1.5.03 — 2026-05-08
+**Regras de elegibilidade ao plano de saúde por modalidade contratual + divergência quando inelegível tem cobrança**
+- `app/processamento.py` — `ler_contratos`: substituída lista fixa `_CONTRATOS_INELEGIVEIS` por lógica baseada em palavras-chave:
+  1. Qualquer contrato com `DETERMINADO` no nome → sem direito (regra geral).
+  2. Exceção prioritária: `TERCEIRIZ*` (determinado ou indeterminado) + departamento contém `PLANALTINA` ou `298` → sempre elegível.
+  3. Demais modalidades → segue valor da planilha de contratos (`vlr_contrato > 0`).
+- `app/regras.py` — `aplicar_regras`: funcionário inelegível **sem** cobrança → `OK`; inelegível **com** cobrança na fatura e/ou na compra → `Inconsistente` com descrição "Sem elegibilidade ao plano de saúde conforme regras contratuais/departamento — [cobrança indevida]" e ação "Verificar e solicitar exclusão do plano".
+
+### V1.5.02 — 2026-05-08
+**Dependentes da fatura Unimed não aparecem mais como linhas na auditoria**
+- `app/processamento.py` — `ler_fatura_csv`: reordenada prioridade da detecção de colunas — coluna "Titular" (nome do funcionário) agora tem precedência sobre coluna "Beneficiário" (nome individual); quando a fatura tem ambas as colunas, todos os lançamentos (titular e dependentes) são agrupados pelo nome do titular automaticamente.
+- `app/processamento.py` — `ler_fatura_csv`: adicionado fallback por ordem de arquivo — quando a coluna detectada é "Beneficiário" e o dependente tem nome diferente do titular, o valor é acumulado no último titular visto; dependente nunca vira linha autônoma na auditoria.
+- Ambas as estratégias se complementam: Fix 1 cobre faturas com coluna "Titular" separada; Fix 2 cobre faturas com coluna única de nomes.
+
+### V1.5.01 — 2026-05-08
+**Dependentes da planilha de compra não aparecem mais como linhas na auditoria**
+- `app/processamento.py` — `ler_compra`: detecta coluna de tipo (Tipo/Categoria/Vínculo/Grau/Tp. Beneficiário) na planilha de compra; linhas de dependente são acumuladas no titular correspondente (por cod_func ou por ordem no arquivo) e nunca viram linhas autônomas; apenas titulares aparecem na tabela de auditoria.
+- `COMPRA_HEADER_GROUPS` — adicionado grupo de detecção da coluna de tipo beneficiário.
+
+### V1.5.00 — 2026-05-08
+**Aprovação como tabela + Dt. Admissão/Demissão + correção de valor com texto**
+- `pages/5_Aprovação.py` — interface completamente redesenhada: tabela interativa (`st.data_editor`) substitui os cards expansíveis; coluna `☑` para seleção de linhas; coluna `Justificativa` editável inline; botão **Salvar edições da tabela**; bloco **Justificar em lote** aplica justificativa a todos os selecionados; opção de gravar para meses futuros mantida.
+- `pages/5_Aprovação.py` — colunas `Dt. Admissão` e `Dt. Demissão` adicionadas à tabela de pendências.
+- `pages/2_Auditoria.py` — colunas `Dt. Admissão` e `Dt. Demissão` adicionadas à tabela de auditoria (antes só `Dt. Admissão` estava presente).
+- `app/processamento.py` — `_parse_brl`: usa regex para extrair o primeiro bloco numérico, corrigindo células com texto junto ao valor (ex: `"403,20 titular"` retornava 0 e o funcionário aparecia como sem direito).
+
+### V1.4.22 — 2026-05-06
+**Aprovação sem dependentes isolados + app recarregado**
+- `app/processamento.py` — componentes da fatura (`mensalidade`, `dependente`, `coparticipação`) passaram a ser carregados também no resultado da auditoria para apoiar regras de aprovação.
+- `pages/5_Aprovação.py` — dependentes na fatura não entram mais na aprovação por si só; só permanecem quando houver divergência real entre compra e fatura.
+- Aplicação local reiniciada para garantir que a interface use o código atualizado.
+
+### V1.4.20 — 2026-05-06
+**Correção de falso positivo no match por nome da fatura**
+- `app/processamento.py` — o match por similaridade entre contrato e fatura foi endurecido para evitar casar pessoas diferentes apenas por sobrenome parecido.
+- Corrige o caso de `LEANDRO DE MELO PEREIRA`, que estava sendo associado indevidamente à fatura de `ALEXSANDRE DA SILVA PEREIRA`.
+- Após a correção, `LEANDRO DE MELO PEREIRA` passa a ficar corretamente como `não consta na fatura`.
+
+### V1.4.19 — 2026-05-06
+**Correção de falso desvio fora da comparação válida**
+- `app/regras.py` — `Dif. Fatura x Compra` agora só é calculada quando o funcionário está simultaneamente na fatura e na compra.
+- Corrige casos como `LEANDRO DE MELO PEREIRA`, em que a pendência correta era apenas `Consta na fatura mas não há lançamento de compra`, mas a tela também mostrava desvio indevido.
+- Revisão na auditoria atual eliminou essa mesma natureza de falso desvio nas demais linhas equivalentes.
+
+### V1.4.18 — 2026-05-06
+**Filtro de inconsistência em Aprovação corrigido**
+- `pages/5_Aprovação.py` — o seletor `Mesma inconsistência para lote` agora filtra de fato a lista de pendências exibidas na tela.
+- `Salvar em lote` segue aplicando a justificativa a todas as pendências com a inconsistência selecionada.
+
+### V1.4.17 — 2026-05-06
+**Leitura ajustada com base nos arquivos reais da auditoria FIOTI**
+- `app/processamento.py` — correlação de nomes refinada com base nos arquivos reais em `G:\Drives compartilhados\#9 - DP\SETRATA\AUDITORIAS\FIOTI\04.2026\SETRATA\FOLHA`.
+- `Contratos` validados com cabeçalhos como `Cód. Empresa`, `Cód. Funcionário`, `Funcionário`, `Contrato Adm.`, `Departamento`, `Valor Plano de Saúde` e `Dt. Admissão`.
+- `Compra` validada com cabeçalhos como `Cód. Emp.`, `Cód. Func.`, `Funcionário`, `Despartamento`, `Valor. Empresa` e `Valor. Beneficário`.
+- `Fatura` validada com CSVs contendo `Beneficiário`, `Titular`, `Categoria`, `Data Inclusão`, `Descrição do item` e `Valor`.
+- Ajuste garante alimentação real de `Valor Fatura` e `Valor Compra`, em vez de apenas `Valor Contrato`.
+
+### V1.4.16 — 2026-05-06
+**Aprovação em lote e justificativas reaproveitáveis**
+- `app/db.py` — criada persistência de justificativas modelo reutilizáveis por `cliente + funcionário + inconsistência`.
+- `pages/5_Aprovação.py` — nova opção de salvar justificativa em lote para todas as pendências com a mesma inconsistência.
+- `pages/5_Aprovação.py` — nova opção para gravar a justificativa para meses futuros quando `Funcionário + Inconsistência` forem exatamente iguais.
+- `pages/5_Aprovação.py` — no mês seguinte, pendências com correspondência exata já entram justificadas automaticamente, mas continuam como pendências até a aprovação final da auditoria.
+
+### V1.4.15 — 2026-05-06
+**Prioridade correta para nome e código da empresa**
+- `app/processamento.py` — leitura do campo de `Funcionário` em `Contratos`, `Compra` e `Titular` na `Fatura` passou a priorizar cabeçalhos claramente de nome, evitando cair em colunas de matrícula/código quando houver ambiguidades.
+- `app/processamento.py` — adicionado campo opcional `Empresa` por nomenclatura para exibição curta por código.
+- `pages/1_Importação.py` — prévia da importação alinhada com a mesma prioridade de escolha da coluna de nome.
+- `pages/2_Auditoria.py` e `pages/3_Inclusões.py` — filtro e coluna `Empresa` adicionados para exibir apenas o código na tela.
+
+### V1.4.14 — 2026-05-06
+**Consistência visual na aba de Inclusões**
+- `pages/3_Inclusões.py` — validado o layout responsivo dos filtros em duas colunas para `Departamento` e `Contrato Adm.`, mantendo consistência com o restante da aplicação.
+
+### V1.4.13 — 2026-05-06
+**Filtros da auditoria mais responsivos**
+- `pages/2_Auditoria.py` — filtros reorganizados em duas linhas para manter o campo `Funcionário` visível e melhorar a responsividade da área de filtros.
+- Mantida a regra de gráficos acima dos filtros, reagindo ao conjunto filtrado.
+
+### V1.4.12 — 2026-05-06
+**Detecção compartilhada entre prévia e processamento**
+- `app/processamento.py` — grupos de nomes esperados para `Contratos`, `Compra` e `Fatura` foram centralizados e reutilizados na escolha do melhor cabeçalho.
+- `pages/1_Importação.py` — a pré-visualização de colunas agora usa o mesmo score de cabeçalho do processamento real para cada tipo de arquivo, reduzindo casos em que a tela mostrava `não encontrado` por escolher uma linha errada como cabeçalho.
+
 ### V1.4.11 — 2026-05-05
 **Pré-visualização de colunas alinhada ao processamento real**
 - `pages/1_Importação.py` — o painel de colunas detectadas agora usa a mesma lógica de detecção de cabeçalho do processamento real para Excel e CSV, reduzindo falsos `não encontrado` na importação.

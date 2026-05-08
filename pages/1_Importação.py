@@ -12,7 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.ui import barra_lateral
 from app.processamento import (ler_contratos, ler_compra,
-                                 ler_faturas_csv, cruzar, _encontrar_col)
+                                 ler_faturas_csv, cruzar, _encontrar_col,
+                                 _encontrar_col_prioritaria,
+                                 _score_cabecalho, CONTRATOS_HEADER_GROUPS,
+                                 FATURA_HEADER_GROUPS, COMPRA_HEADER_GROUPS)
 from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes, _parse_periodo
 from app import db
 
@@ -24,6 +27,45 @@ st.header("1 · Importação de Arquivos")
 from app.regras import identificar_incluidos_mes
 
 _ultimos = db.listar_periodos()
+
+
+def _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp):
+    mc  = db.carregar_mapeamento(cliente, "contratos") if cliente else {}
+    mf  = db.carregar_mapeamento(cliente, "fatura")    if cliente else {}
+    mcp = db.carregar_mapeamento(cliente, "compra")    if cliente else {}
+
+    df_cont   = ler_contratos(p_cont, mc)
+    df_fat    = ler_faturas_csv(p_fats, mf) if p_fats else pd.DataFrame()
+    df_compra = ler_compra(p_comp, mcp)     if p_comp else pd.DataFrame()
+
+    if df_cont.empty:
+        raise ValueError("Não foi possível ler a planilha de contratos. Verifique o arquivo.")
+
+    df_audit = aplicar_regras(cruzar(df_cont, df_fat, df_compra, periodo))
+    stats  = calcular_stats(df_audit)
+    df_inc = identificar_incluidos_mes(df_audit, periodo)
+    aid = db.salvar_auditoria(df_audit, stats, periodo, cliente)
+
+    if cliente:
+        db.salvar_mapeamento(cliente, "contratos", mc)
+        if p_fats:
+            db.salvar_mapeamento(cliente, "fatura", mf)
+        if p_comp:
+            db.salvar_mapeamento(cliente, "compra", mcp)
+
+    return df_audit, stats, df_inc, aid
+
+
+def _atualizar_sessao(df_audit, df_inc, stats, periodo, cliente, aid, arquivos_fontes=None):
+    st.session_state.update({
+        "df_audit": df_audit,
+        "df_inc": df_inc,
+        "stats": stats,
+        "periodo": periodo,
+        "cliente": cliente,
+        "auditoria_id": aid,
+        "arquivos_fontes": arquivos_fontes or st.session_state.get("arquivos_fontes", {}),
+    })
 
 # Auditoria já na sessão
 if "df_audit" in st.session_state and st.session_state["df_audit"] is not None:
@@ -54,12 +96,17 @@ elif _ultimos:
         if _df is not None and not _df.empty:
             _df = aplicar_regras(_df)
             _stats = calcular_stats(_df)
-            st.session_state["df_audit"]     = _df
-            st.session_state["df_inc"]       = identificar_incluidos_mes(_df, _ultimo["periodo"])
-            st.session_state["stats"]        = _stats or {}
-            st.session_state["periodo"]      = _ultimo["periodo"]
-            st.session_state["cliente"]      = _ultimo["cliente"]
-            st.session_state["auditoria_id"] = (_meta or {}).get("id")
+            _aid = (_meta or {}).get("id")
+            _arquivos = db.carregar_arquivos_auditoria(_aid) if _aid else {}
+            _atualizar_sessao(
+                _df,
+                identificar_incluidos_mes(_df, _ultimo["periodo"]),
+                _stats or {},
+                _ultimo["periodo"],
+                _ultimo["cliente"],
+                _aid,
+                _arquivos,
+            )
             st.success(
                 f"✅ Auditoria **{_ultimo['periodo']}** carregada com sucesso! "
                 "Acesse **2 · Auditoria** no menu à esquerda."
@@ -69,8 +116,6 @@ elif _ultimos:
                 "Não foi possível carregar a auditoria do banco de dados. "
                 "Tente processar os arquivos novamente."
             )
-
-st.divider()
 
 # ── Período e cliente ────────────────────────────────────────────────────────
 st.markdown("### Período de referência")
@@ -93,6 +138,37 @@ with c2:
     )
 
 st.divider()
+
+arquivos_fontes = st.session_state.get("arquivos_fontes", {})
+if any(arquivos_fontes.get(k) for k in ("contratos", "fatura", "compra")):
+    st.markdown("### Arquivos carregados")
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        st.caption("**Contratos**")
+        for item in arquivos_fontes.get("contratos", []):
+            st.write(item["nome"])
+    with a2:
+        st.caption("**Faturas**")
+        for item in arquivos_fontes.get("fatura", []):
+            st.write(item["nome"])
+    with a3:
+        st.caption("**Compra**")
+        for item in arquivos_fontes.get("compra", []):
+            st.write(item["nome"])
+
+    if st.button("🔄 Reprocessar com arquivos salvos", use_container_width=True):
+        try:
+            with st.spinner("Reprocessando com arquivos salvos…"):
+                p_cont = arquivos_fontes.get("contratos", [{}])[0].get("caminho")
+                p_fats = [x["caminho"] for x in arquivos_fontes.get("fatura", [])]
+                p_comp = arquivos_fontes.get("compra", [{}])[0].get("caminho")
+                df_audit, stats, df_inc, aid = _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp)
+                _atualizar_sessao(df_audit, df_inc, stats, periodo, cliente, aid, arquivos_fontes)
+            st.success(f"✅ Auditoria **{periodo}** reprocessada com os arquivos já carregados.")
+        except Exception as exc:
+            st.error(f"Erro ao reprocessar: {exc}")
+
+    st.divider()
 
 # ── Upload dos arquivos ───────────────────────────────────────────────────────
 st.markdown("### Arquivos")
@@ -122,7 +198,7 @@ with uc3:
 st.divider()
 
 # ── Preview de colunas detectadas (informativo, sem interação) ───────────────
-def _ler_colunas_arq(arq):
+def _ler_colunas_arq(arq, grupos_keywords=None):
     """Lê colunas de um arquivo (UploadedFile). Retorna lista ou []."""
     if not arq:
         return []
@@ -130,6 +206,8 @@ def _ler_colunas_arq(arq):
         arq.seek(0)
         dados = arq.read()
         nome = arq.name.lower()
+        melhor_cols = []
+        melhor_score = -1
 
         def _cols_validas(df):
             if df.empty or len(df.columns) < 2:
@@ -142,8 +220,10 @@ def _ler_colunas_arq(arq):
                 try:
                     df = pd.read_excel(io.BytesIO(dados), dtype=str, header=header_row)
                     df = df.dropna(how="all").dropna(how="all", axis=1)
-                    if _cols_validas(df):
-                        return list(df.columns)
+                    score = _score_cabecalho(df, grupos_keywords)
+                    if _cols_validas(df) and score > melhor_score:
+                        melhor_cols = list(df.columns)
+                        melhor_score = score
                 except Exception:
                     continue
         else:
@@ -161,11 +241,13 @@ def _ler_colunas_arq(arq):
                                 on_bad_lines="skip",
                             )
                             df = df.dropna(how="all").dropna(how="all", axis=1)
-                            if _cols_validas(df):
-                                return list(df.columns)
+                            score = _score_cabecalho(df, grupos_keywords)
+                            if _cols_validas(df) and score > melhor_score:
+                                melhor_cols = list(df.columns)
+                                melhor_score = score
                         except Exception:
                             continue
-        return []
+        return melhor_cols
     except Exception:
         return []
 
@@ -190,37 +272,39 @@ if arq_cont or arq_fats or arq_comp:
                 st.caption("Nenhum arquivo carregado.")
 
         # Contratos
-        cols_cont = _ler_colunas_arq(arq_cont) if arq_cont else []
+        cols_cont = _ler_colunas_arq(arq_cont, CONTRATOS_HEADER_GROUPS) if arq_cont else []
         df_cont_preview = pd.DataFrame(columns=cols_cont)
         with dc1:
             _mostrar_cols("Contratos", cols_cont, {
-                "Funcionário":         _encontrar_col(df_cont_preview, "funcionario","funcionária","nome funcionario","nome da funcionária","nome"),
+                "Funcionário":         _encontrar_col_prioritaria(df_cont_preview, "nome do funcionario","nome da funcionaria","nome funcionario","nome da funcionária","funcionario","funcionária","nome colaborador","nome empregado","nome"),
+                "Empresa":             _encontrar_col(df_cont_preview, "cód. empresa","cod empresa","empresa"),
                 "Departamento":        _encontrar_col(df_cont_preview, "departamento","depto","setor","unidade","lotação"),
                 "Contrato Adm.":       _encontrar_col(df_cont_preview, "contrato adm","contrato administrativo","contrato adm.","contr. adm","tipo contrato"),
-                "Valor Plano":         _encontrar_col(df_cont_preview, "valor plano","vlr plano","mensalidade titular","valor mensal titular","plano","saude","mensalidade"),
-                "Admissão":            _encontrar_col(df_cont_preview, "admissao","dt. admissao","admissão","dt adm","data adm"),
+                "Valor Plano":         _encontrar_col(df_cont_preview, "valor plano de saúde","valor plano de saude","valor plano","vlr plano","mensalidade titular","valor mensal titular","plano","saude","mensalidade"),
+                "Admissão":            _encontrar_col(df_cont_preview, "dt. admissão","dt. admissao","admissão","dt adm","data adm"),
             })
 
         # Fatura
         arq_fat_preview = arq_fats[0] if arq_fats else None
-        cols_fat = _ler_colunas_arq(arq_fat_preview) if arq_fat_preview else []
+        cols_fat = _ler_colunas_arq(arq_fat_preview, FATURA_HEADER_GROUPS) if arq_fat_preview else []
         df_fat_preview = pd.DataFrame(columns=cols_fat)
         with dc2:
             _mostrar_cols("Fatura CSV", cols_fat, {
-                "Titular":       _encontrar_col(df_fat_preview, "titular","beneficiario","nome"),
+                "Titular":       _encontrar_col_prioritaria(df_fat_preview, "nome do titular","beneficiário titular","beneficiario titular","titular","beneficiário","beneficiario","nome"),
+                "Descrição":     _encontrar_col(df_fat_preview, "descrição do item","descricao do item","descrição","descricao"),
                 "Valor":         _encontrar_col(df_fat_preview, "valor","vl."),
                 "Data Inclusão": _encontrar_col(df_fat_preview, "data inclusao","data de inclusao","inclusao","dt. inclusao"),
                 "Nascimento":    _encontrar_col(df_fat_preview, "nascimento","data nasc"),
             })
 
         # Compra
-        cols_comp = _ler_colunas_arq(arq_comp) if arq_comp else []
+        cols_comp = _ler_colunas_arq(arq_comp, COMPRA_HEADER_GROUPS) if arq_comp else []
         df_comp_preview = pd.DataFrame(columns=cols_comp)
         with dc3:
             _mostrar_cols("Compra", cols_comp, {
-                "Funcionário":            _encontrar_col(df_comp_preview, "funcionario","funcionária","nome funcionario","titular","nome"),
-                "Valor Empresa":          _encontrar_col(df_comp_preview, "valor empresa","valor mensal empresa","mensalidade empresa","patronal","custo empresa","empresa"),
-                "Valor Func.":            _encontrar_col(df_comp_preview, "valor beneficiario","valor funcionario","mensalidade funcionario","desconto funcionario","beneficiario"),
+                "Funcionário":            _encontrar_col_prioritaria(df_comp_preview, "nome do funcionario","nome da funcionaria","nome funcionario","nome da funcionária","beneficiario titular","funcionario","funcionária","titular","nome"),
+                "Valor Empresa":          _encontrar_col(df_comp_preview, "valor. empresa","valor empresa","valor mensal empresa","mensalidade empresa","patronal","custo empresa","empresa"),
+                "Valor Func.":            _encontrar_col(df_comp_preview, "valor. beneficário","valor beneficário","valor beneficiario","valor funcionario","mensalidade funcionario","desconto funcionario","beneficiario"),
             })
 
 # ── Botão processar ──────────────────────────────────────────────────────────
@@ -257,42 +341,16 @@ if btn:
             p_cont = _tmp(arq_cont)
             p_fats = [_tmp(a) for a in (arq_fats or [])]
             p_comp = _tmp(arq_comp) if arq_comp else None
+            df_audit, stats, df_inc, aid = _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp)
 
-            # Mapeamento automático — sem interação do usuário
-            mc  = db.carregar_mapeamento(cliente, "contratos") if cliente else {}
-            mf  = db.carregar_mapeamento(cliente, "fatura")    if cliente else {}
-            mcp = db.carregar_mapeamento(cliente, "compra")    if cliente else {}
-
-            df_cont   = ler_contratos(p_cont, mc)
-            df_fat    = ler_faturas_csv(p_fats, mf) if p_fats else pd.DataFrame()
-            df_compra = ler_compra(p_comp, mcp)     if p_comp else pd.DataFrame()
-
-            if df_cont.empty:
-                st.error("Não foi possível ler a planilha de contratos. Verifique o arquivo.")
-                st.stop()
-
-            df_audit = cruzar(df_cont, df_fat, df_compra, periodo)
-            df_audit = aplicar_regras(df_audit)
-
-        stats  = calcular_stats(df_audit)
-        df_inc = identificar_incluidos_mes(df_audit, periodo)
-
-        aid = db.salvar_auditoria(df_audit, stats, periodo, cliente)
-        if cliente:
-            db.salvar_mapeamento(cliente, "contratos", mc)
-            if p_fats:
-                db.salvar_mapeamento(cliente, "fatura", mf)
-            if p_comp:
-                db.salvar_mapeamento(cliente, "compra", mcp)
-
-        st.session_state.update({
-            "df_audit":     df_audit,
-            "df_inc":       df_inc,
-            "stats":        stats,
-            "periodo":      periodo,
-            "cliente":      cliente,
-            "auditoria_id": aid,
-        })
+        arquivos_salvos = {
+            "contratos": [{"nome": arq_cont.name, "origem": p_cont}],
+            "fatura": [{"nome": a.name, "origem": p} for a, p in zip((arq_fats or []), p_fats)],
+            "compra": [{"nome": arq_comp.name, "origem": p_comp}] if p_comp and arq_comp else [],
+        }
+        db.salvar_arquivos_auditoria(aid, arquivos_salvos)
+        arquivos_fontes = db.carregar_arquivos_auditoria(aid)
+        _atualizar_sessao(df_audit, df_inc, stats, periodo, cliente, aid, arquivos_fontes)
 
         n_inc = len(df_inc)
         st.success(

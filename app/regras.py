@@ -45,9 +45,46 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
             axis=1,
         )
 
+    if {"Valor Fatura", "Valor Compra Total", "_na_fatura", "_na_compra"}.issubset(df.columns):
+        df["Dif. Fatura x Compra"] = df.apply(
+            lambda row: round(
+                abs(
+                    float(row.get("Valor Fatura", 0) or 0)
+                    - float(row.get("Valor Compra Total", 0) or 0)
+                ),
+                2,
+            ) if bool(row.get("_na_fatura", False)) and bool(row.get("_na_compra", False)) else 0.0,
+            axis=1,
+        )
+
     status_list, desc_list, acao_list = [], [], []
 
     for _, row in df.iterrows():
+        # Inelegível = sem direito por regra contratual/departamental.
+        # Se não tem cobrança → OK.  Se tem cobrança → divergência obrigatória.
+        if bool(row.get("_inelegivel_contrato", False)):
+            _na_fat = bool(row.get("_na_fatura", False))
+            _na_cmp = bool(row.get("_na_compra", False))
+            if _na_fat or _na_cmp:
+                _partes = []
+                if _na_fat:
+                    _partes.append("cobrança na fatura Unimed")
+                if _na_cmp:
+                    _partes.append("lançamento no sistema de compra")
+                status_list.append("Inconsistente")
+                desc_list.append(
+                    "Sem elegibilidade ao plano de saúde conforme regras contratuais/departamento"
+                    f" — {' e '.join(_partes)} indevido(s)"
+                )
+                acao_list.append(
+                    "Verificar e solicitar exclusão do plano conforme modalidade contratual"
+                )
+            else:
+                status_list.append("OK")
+                desc_list.append("")
+                acao_list.append("")
+            continue
+
         tem_direito  = str(row.get("Tem Direito", "Não"))
         na_fatura    = bool(row.get("_na_fatura", False))
         na_compra    = bool(row.get("_na_compra", False))
