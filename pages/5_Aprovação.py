@@ -22,19 +22,22 @@ aid     = st.session_state.get("auditoria_id")
 periodo = st.session_state.get("periodo", "")
 cliente = st.session_state.get("cliente", "")
 
+# ── Fallback: garantir que aid aponta para o audit com justificativas ────────
+if periodo:
+    if not aid:
+        # Sessão sem auditoria_id — buscar o mais recente do período
+        _ultimos_per = db.listar_periodos()
+        for _p in _ultimos_per:
+            if _p["periodo"] == periodo:
+                aid = _p["id"]
+                st.session_state["auditoria_id"] = aid
+                break
+
+    if aid and not db.carregar_justificativas(aid):
+        # audit_id existe mas sem justificativas — migrar do período
+        db.migrar_justificativas(aid, periodo, cliente)
+
 pendentes = df[df["Status"] == "Inconsistente"].copy() if "Status" in df.columns else pd.DataFrame()
-
-# Dependentes na fatura não entram em aprovação por si só —
-# só permanecem quando há divergência real entre compra e fatura.
-if not pendentes.empty:
-    col_sem_contrato = pendentes["_sem_contrato"] if "_sem_contrato" in pendentes.columns else pd.Series(False, index=pendentes.index)
-    col_na_fatura    = pendentes["_na_fatura"]    if "_na_fatura"    in pendentes.columns else pd.Series(False, index=pendentes.index)
-    col_mens_fat     = pd.to_numeric(pendentes.get("_vlr_mensalidade_fat", 0), errors="coerce").fillna(0)
-    col_dif_fat      = pd.to_numeric(pendentes.get("Dif. Fatura x Compra",  0), errors="coerce").fillna(0)
-
-    pendentes = pendentes[
-        ~(col_sem_contrato & col_na_fatura & (col_mens_fat == 0) & (col_dif_fat == 0))
-    ].copy()
 
 st.subheader(f"Período: {periodo}" + (f" · {cliente}" if cliente else ""))
 
@@ -105,7 +108,7 @@ st.caption(f"**{len(pendentes_exibidas)}** pendência(s) exibida(s)")
 # ── Tabela editável ───────────────────────────────────────────────────────────
 COLS_INFO = [c for c in [
     "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
-    "Dt. Admissão", "Dt. Demissão",
+    "Dt. Admissão", "Dt. Demissão", "Dt. Elegibilidade",
     "Inconsistência", "Ação Sugerida",
 ] if c in pendentes_exibidas.columns]
 

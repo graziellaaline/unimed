@@ -85,6 +85,30 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
                 acao_list.append("")
             continue
 
+        # Funcionário em período de experiência (< 90 dias da admissão)
+        if bool(row.get("_aguarda_elegibilidade", False)):
+            _na_fat = bool(row.get("_na_fatura", False))
+            _na_cmp = bool(row.get("_na_compra", False))
+            dt_eleg = str(row.get("Dt. Elegibilidade", "") or "")
+            eleg_txt = f", elegível em {dt_eleg}" if dt_eleg else ""
+            if _na_fat or _na_cmp:
+                _partes = []
+                if _na_fat:
+                    _partes.append("cobrança na fatura Unimed")
+                if _na_cmp:
+                    _partes.append("lançamento no sistema de compra")
+                status_list.append("Inconsistente")
+                desc_list.append(
+                    f"Em período de experiência{eleg_txt}"
+                    f" — {' e '.join(_partes)} indevido(s)"
+                )
+                acao_list.append("Remover do plano até completar 90 dias da admissão")
+            else:
+                status_list.append("OK")
+                desc_list.append("")
+                acao_list.append("")
+            continue
+
         tem_direito  = str(row.get("Tem Direito", "Não"))
         na_fatura    = bool(row.get("_na_fatura", False))
         na_compra    = bool(row.get("_na_compra", False))
@@ -118,8 +142,29 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
             inc.append("Lançado na compra mas não consta na fatura Unimed")
             acoes.append("Verificar se lançamento é indevido ou se fatura está incompleta")
 
-        # R5 — Valor empresa (compra) maior que o valor do contrato
-        if na_compra and vlr_cont > 0 and vlr_emp > 0:
+        # R5 — Valor empresa (compra) vs contrato
+        # Para ANATACHA: empresa cobre mensalidade titular + dependentes (não só o contrato titular).
+        # Usamos comparação especial; para os demais, comparação padrão empresa vs contrato.
+        anatacha = bool(row.get("_anatacha_especial", False))
+        if anatacha and na_fatura and na_compra:
+            vlr_mens_fat = float(row.get("_vlr_mensalidade_fat", 0) or 0)
+            vlr_dep_fat  = float(row.get("_vlr_dependente_fat",  0) or 0)
+            vlr_cop_fat  = float(row.get("_vlr_copart_fat",      0) or 0)
+            esperado_emp = round(vlr_mens_fat + vlr_dep_fat, 2)
+            vlr_func_cmp = round(vlr_comp_tot - vlr_emp, 2)
+            if abs(vlr_emp - esperado_emp) > 0.10:
+                inc.append(
+                    f"ANATACHA — compra empresa (R$ {vlr_emp:.2f}) difere das mensalidades "
+                    f"titular+dependentes na fatura (R$ {esperado_emp:.2f})"
+                )
+                acoes.append("Ajustar compra empresa para cobrir mensalidade titular + dependentes")
+            if vlr_cop_fat > 0 and abs(vlr_func_cmp - vlr_cop_fat) > 0.10:
+                inc.append(
+                    f"ANATACHA — compra funcionária (R$ {vlr_func_cmp:.2f}) difere da "
+                    f"coparticipação na fatura (R$ {vlr_cop_fat:.2f})"
+                )
+                acoes.append("Ajustar compra funcionária para cobrir apenas coparticipações")
+        elif not anatacha and na_compra and vlr_cont > 0 and vlr_emp > 0:
             dif_cont = vlr_emp - vlr_cont
             if dif_cont > 0.10:
                 inc.append(

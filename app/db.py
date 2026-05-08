@@ -126,16 +126,16 @@ def listar_periodos(cliente: str = "") -> list:
     con = _conn()
     cur = con.cursor()
     cur.execute(
-        "SELECT periodo, cliente, MAX(processado_em) AS ultimo, COUNT(*) AS versoes "
+        "SELECT MAX(id) AS id, periodo, cliente, MAX(processado_em) AS ultimo, COUNT(*) AS versoes "
         "FROM auditorias WHERE (cliente=? OR ?='') "
         "GROUP BY periodo, cliente ORDER BY periodo DESC",
         (cliente, cliente)
     )
     rows = cur.fetchall()
     con.close()
-    return [{"periodo": r[0], "cliente": r[1],
-             "processado_em": (r[2] or "")[:16].replace("T", " "),
-             "versoes": r[3]} for r in rows]
+    return [{"id": r[0], "periodo": r[1], "cliente": r[2],
+             "processado_em": (r[3] or "")[:16].replace("T", " "),
+             "versoes": r[4]} for r in rows]
 
 
 def aprovar_auditoria(auditoria_id: int):
@@ -202,6 +202,43 @@ def carregar_arquivos_auditoria(auditoria_id: int) -> dict:
 # Justificativas
 # ---------------------------------------------------------------------------
 
+def migrar_justificativas(novo_id: int, periodo: str, cliente: str = ""):
+    """
+    Copia justificativas da auditoria anterior mais recente do mesmo período
+    para o novo audit_id. Garante que reprocessamentos não percam aprovações.
+    Só copia registros que ainda não existem no novo ID.
+    """
+    con = _conn()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT id FROM auditorias WHERE periodo=? AND (cliente=? OR ?='') AND id != ? "
+        "ORDER BY processado_em DESC LIMIT 1",
+        (periodo, cliente or "", cliente or "", novo_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        con.close()
+        return
+    id_anterior = row[0]
+    cur.execute(
+        "SELECT funcionario, descricao, justificativa FROM justificativas WHERE auditoria_id=?",
+        (id_anterior,),
+    )
+    for func, desc, just in cur.fetchall():
+        cur.execute(
+            "SELECT COUNT(*) FROM justificativas WHERE auditoria_id=? AND funcionario=?",
+            (novo_id, func),
+        )
+        if cur.fetchone()[0] == 0:
+            cur.execute(
+                "INSERT INTO justificativas (auditoria_id, funcionario, descricao, justificativa, criado_em) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (novo_id, func, desc, just, datetime.now().isoformat()),
+            )
+    con.commit()
+    con.close()
+
+
 def salvar_justificativa(auditoria_id: int, funcionario: str,
                          descricao: str, justificativa: str):
     con = _conn()
@@ -221,6 +258,8 @@ def salvar_justificativa(auditoria_id: int, funcionario: str,
 
 def carregar_justificativas(auditoria_id: int) -> dict:
     """Retorna {funcionario: justificativa}"""
+    if not auditoria_id:
+        return {}
     con = _conn()
     cur = con.cursor()
     cur.execute(
@@ -230,6 +269,30 @@ def carregar_justificativas(auditoria_id: int) -> dict:
     rows = cur.fetchall()
     con.close()
     return {r[0]: r[1] for r in rows}
+
+
+def carregar_justificativas_por_periodo(periodo: str, cliente: str = "") -> tuple:
+    """
+    Busca as justificativas do audit mais recente do período que TENHA justificativas salvas.
+    Retorna (auditoria_id, {funcionario: justificativa}).
+    Fallback quando a sessão aponta para um audit_id sem justificativas.
+    """
+    con = _conn()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT j.auditoria_id, j.funcionario, j.justificativa "
+        "FROM justificativas j "
+        "JOIN auditorias a ON a.id = j.auditoria_id "
+        "WHERE a.periodo=? AND (a.cliente=? OR ?='') "
+        "ORDER BY a.processado_em DESC",
+        (periodo, cliente or "", cliente or ""),
+    )
+    rows = cur.fetchall()
+    con.close()
+    if not rows:
+        return None, {}
+    aid_encontrado = rows[0][0]
+    return aid_encontrado, {r[1]: r[2] for r in rows if r[0] == aid_encontrado}
 
 
 def salvar_justificativa_modelo(cliente: str, funcionario: str,

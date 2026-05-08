@@ -184,7 +184,7 @@ with graficos_container:
 # ── Tabela ────────────────────────────────────────────────────────────────────
 COLS_EX = [
     "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
-    "Dt. Admissão", "Dt. Demissão",
+    "Dt. Admissão", "Dt. Demissão", "Dt. Elegibilidade",
     "Tem Direito", "Está na Fatura", "Está na Compra",
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
     "Dif. Contrato x Compra", "Dif. Fatura x Compra",

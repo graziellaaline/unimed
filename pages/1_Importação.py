@@ -46,6 +46,9 @@ def _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp):
     df_inc = identificar_incluidos_mes(df_audit, periodo)
     aid = db.salvar_auditoria(df_audit, stats, periodo, cliente)
 
+    # Herdar justificativas da auditoria anterior — nunca perder aprovações ao reprocessar
+    db.migrar_justificativas(aid, periodo, cliente)
+
     if cliente:
         db.salvar_mapeamento(cliente, "contratos", mc)
         if p_fats:
@@ -67,6 +70,15 @@ def _atualizar_sessao(df_audit, df_inc, stats, periodo, cliente, aid, arquivos_f
         "arquivos_fontes": arquivos_fontes or st.session_state.get("arquivos_fontes", {}),
     })
 
+# ── Auto-carregar arquivos_fontes quando sessão reinicia ─────────────────────
+if "df_audit" in st.session_state and st.session_state["df_audit"] is not None:
+    if not st.session_state.get("arquivos_fontes"):
+        _aid_sess = st.session_state.get("auditoria_id")
+        if _aid_sess:
+            _arqs_sess = db.carregar_arquivos_auditoria(_aid_sess)
+            if any(_arqs_sess.get(k) for k in ("contratos", "fatura", "compra")):
+                st.session_state["arquivos_fontes"] = _arqs_sess
+
 # Auditoria já na sessão
 if "df_audit" in st.session_state and st.session_state["df_audit"] is not None:
     _periodo_atual = st.session_state.get("periodo", "")
@@ -80,42 +92,82 @@ if "df_audit" in st.session_state and st.session_state["df_audit"] is not None:
 elif _ultimos:
     # Há auditorias salvas no banco mas nenhuma na sessão
     _ultimo = _ultimos[0]
+    _aid_ult = _ultimo.get("id")
+    _arqs_ult = db.carregar_arquivos_auditoria(_aid_ult) if _aid_ult else {}
+    _tem_arqs = any(_arqs_ult.get(k) for k in ("contratos", "fatura", "compra"))
+
     st.info(
         f"📂 Última auditoria salva: **{_ultimo['periodo']}** "
         f"· processada em {_ultimo['processado_em']}"
     )
-    if st.button(
-        f"⬇  Carregar auditoria de {_ultimo['periodo']} (sem importar arquivos)",
-        type="primary",
-        use_container_width=True,
-    ):
-        with st.spinner("Carregando…"):
-            _df, _stats, _meta = db.carregar_auditoria(
-                _ultimo["periodo"], _ultimo["cliente"]
-            )
-        if _df is not None and not _df.empty:
-            _df = aplicar_regras(_df)
-            _stats = calcular_stats(_df)
-            _aid = (_meta or {}).get("id")
-            _arquivos = db.carregar_arquivos_auditoria(_aid) if _aid else {}
-            _atualizar_sessao(
-                _df,
-                identificar_incluidos_mes(_df, _ultimo["periodo"]),
-                _stats or {},
-                _ultimo["periodo"],
-                _ultimo["cliente"],
-                _aid,
-                _arquivos,
-            )
-            st.success(
-                f"✅ Auditoria **{_ultimo['periodo']}** carregada com sucesso! "
-                "Acesse **2 · Auditoria** no menu à esquerda."
-            )
-        else:
-            st.error(
-                "Não foi possível carregar a auditoria do banco de dados. "
-                "Tente processar os arquivos novamente."
-            )
+    _bc1, _bc2 = st.columns(2)
+
+    with _bc1:
+        if st.button(
+            f"⬇  Carregar resultado de {_ultimo['periodo']} (sem reimportar)",
+            use_container_width=True,
+        ):
+            with st.spinner("Carregando…"):
+                _df, _stats, _meta = db.carregar_auditoria(
+                    _ultimo["periodo"], _ultimo["cliente"]
+                )
+            if _df is not None and not _df.empty:
+                _df = aplicar_regras(_df)
+                _stats = calcular_stats(_df)
+                _aid = (_meta or {}).get("id")
+                _atualizar_sessao(
+                    _df,
+                    identificar_incluidos_mes(_df, _ultimo["periodo"]),
+                    _stats or {},
+                    _ultimo["periodo"],
+                    _ultimo["cliente"],
+                    _aid,
+                    _arqs_ult,
+                )
+                st.success(
+                    f"✅ Auditoria **{_ultimo['periodo']}** carregada! "
+                    "Acesse **2 · Auditoria** no menu à esquerda."
+                )
+                st.rerun()
+            else:
+                st.error(
+                    "Não foi possível carregar a auditoria do banco. "
+                    "Tente reprocessar os arquivos."
+                )
+
+    with _bc2:
+        if st.button(
+            f"🔄 Reprocessar {_ultimo['periodo']} com regras atuais"
+            if _tem_arqs else "🔄 Reprocessar (sem arquivos salvos)",
+            type="primary",
+            disabled=not _tem_arqs,
+            use_container_width=True,
+        ):
+            try:
+                with st.spinner(f"Reprocessando {_ultimo['periodo']}…"):
+                    _p_cont = (_arqs_ult.get("contratos") or [{}])[0].get("caminho")
+                    _p_fats = [x["caminho"] for x in _arqs_ult.get("fatura", [])]
+                    _p_comp_item = (_arqs_ult.get("compra") or [None])[0]
+                    _p_comp = _p_comp_item.get("caminho") if isinstance(_p_comp_item, dict) else None
+                    df_r, stats_r, df_inc_r, aid_r = _processar_auditoria(
+                        _ultimo["periodo"], _ultimo["cliente"],
+                        _p_cont, _p_fats, _p_comp,
+                    )
+                    db.salvar_arquivos_auditoria(aid_r, {
+                        "contratos": [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in _arqs_ult.get("contratos", [])],
+                        "fatura":    [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in _arqs_ult.get("fatura", [])],
+                        "compra":    [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in _arqs_ult.get("compra", [])],
+                    })
+                    _arqs_r = db.carregar_arquivos_auditoria(aid_r)
+                    _atualizar_sessao(df_r, df_inc_r, stats_r,
+                                      _ultimo["periodo"], _ultimo["cliente"], aid_r, _arqs_r)
+                st.success(f"✅ Auditoria **{_ultimo['periodo']}** reprocessada com as regras atuais.")
+                st.rerun()
+            except Exception as _exc:
+                st.error(f"Erro ao reprocessar: {_exc}")
+                import traceback as _tb
+                with st.expander("Detalhes técnicos"):
+                    st.code(_tb.format_exc())
 
 # ── Período e cliente ────────────────────────────────────────────────────────
 st.markdown("### Período de referência")
@@ -156,17 +208,36 @@ if any(arquivos_fontes.get(k) for k in ("contratos", "fatura", "compra")):
         for item in arquivos_fontes.get("compra", []):
             st.write(item["nome"])
 
-    if st.button("🔄 Reprocessar com arquivos salvos", use_container_width=True):
+    if st.button("🔄 Reprocessar com arquivos salvos", use_container_width=True, type="primary"):
+        # Usa o período da sessão se o campo do formulário estiver vazio
+        _periodo_reprocess = periodo or st.session_state.get("periodo", "")
+        _cliente_reprocess = cliente or st.session_state.get("cliente", "")
         try:
-            with st.spinner("Reprocessando com arquivos salvos…"):
-                p_cont = arquivos_fontes.get("contratos", [{}])[0].get("caminho")
-                p_fats = [x["caminho"] for x in arquivos_fontes.get("fatura", [])]
-                p_comp = arquivos_fontes.get("compra", [{}])[0].get("caminho")
-                df_audit, stats, df_inc, aid = _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp)
-                _atualizar_sessao(df_audit, df_inc, stats, periodo, cliente, aid, arquivos_fontes)
-            st.success(f"✅ Auditoria **{periodo}** reprocessada com os arquivos já carregados.")
+            with st.spinner("Reprocessando…"):
+                _p_cont = (arquivos_fontes.get("contratos") or [{}])[0].get("caminho")
+                _p_fats = [x["caminho"] for x in arquivos_fontes.get("fatura", [])]
+                _p_comp = (arquivos_fontes.get("compra") or [None])[0]
+                if isinstance(_p_comp, dict):
+                    _p_comp = _p_comp.get("caminho")
+                df_audit_r, stats_r, df_inc_r, aid_r = _processar_auditoria(
+                    _periodo_reprocess, _cliente_reprocess,
+                    _p_cont, _p_fats, _p_comp,
+                )
+                db.salvar_arquivos_auditoria(aid_r, {
+                    "contratos": [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in arquivos_fontes.get("contratos", [])],
+                    "fatura":    [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in arquivos_fontes.get("fatura", [])],
+                    "compra":    [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in arquivos_fontes.get("compra", [])],
+                })
+                _arqs_r = db.carregar_arquivos_auditoria(aid_r)
+                _atualizar_sessao(df_audit_r, df_inc_r, stats_r,
+                                  _periodo_reprocess, _cliente_reprocess, aid_r, _arqs_r)
+            st.success(f"✅ Auditoria **{_periodo_reprocess}** reprocessada.")
+            st.rerun()
         except Exception as exc:
             st.error(f"Erro ao reprocessar: {exc}")
+            import traceback as _tb
+            with st.expander("Detalhes técnicos"):
+                st.code(_tb.format_exc())
 
     st.divider()
 

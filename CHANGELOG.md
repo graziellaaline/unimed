@@ -12,6 +12,68 @@
 
 ## Histórico
 
+### V1.5.14 — 2026-05-08
+**Aprovação: recuperação automática de justificativas mesmo com sessão resetada**
+- `app/db.py` — nova função `carregar_justificativas_por_periodo()`: busca as justificativas do audit mais recente do período que tenha dados salvos — fallback quando `auditoria_id` da sessão aponta para audit sem justificativas.
+- `pages/5_Aprovação.py` — ao abrir a aba, se `auditoria_id` está sem justificativas ou ausente, o sistema localiza e migra automaticamente as justificativas do período sem precisar de ação do usuário.
+
+### V1.5.13 — 2026-05-08
+**Justificativas nunca são perdidas ao reprocessar**
+- `app/db.py` — nova função `migrar_justificativas(novo_id, periodo, cliente)`: copia automaticamente todas as justificativas da auditoria anterior mais recente do mesmo período para o novo audit_id; só copia registros ainda não existentes no novo ID.
+- `pages/1_Importação.py` — `_processar_auditoria` chama `migrar_justificativas` logo após criar o novo audit, garantindo que reprocessamentos herdem as aprovações já feitas.
+
+### V1.5.12 — 2026-05-08
+**Aprovação: todos os Inconsistentes agora aparecem (IVANDO e outros corrigidos)**
+- `pages/5_Aprovação.py` — removido o filtro de "dependente isolado" (`_sem_contrato & _na_fatura & mens_fat=0 & dif_fat=0`) que ocultava funcionários com contrato mas com falha de match de nome (ex: IVANDO JOSE TEODORO). Todo registro com `Status = Inconsistente` agora aparece na aba de Aprovação. Justificativas existentes no banco não são afetadas.
+
+### V1.5.11 — 2026-05-08
+**Correção de datas invertidas + reprocessamento**
+- `app/processamento.py` — `_fmt_data`: removido fallback sem `dayfirst` (causava inversão de dia/mês em datas ambíguas); agora testa formatos explícitos em ordem: DD/MM/YYYY (BR), ISO YYYY-MM-DD, variantes; último recurso usa `dayfirst=True` exclusivamente.
+- `pages/1_Importação.py` — botão "Reprocessar" (bloco arquivos salvos): corrigido `IndexError` quando compra é lista vazia; usa período da sessão como fallback se formulário vazio; salva arquivos no novo `auditoria_id` e recarrega caminhos antes de atualizar a sessão.
+- `pages/1_Importação.py` — botão "Reprocessar" (tela inicial sem sessão): mesmo fix de `IndexError` e recarga de caminhos pós-processamento.
+
+### V1.5.10 — 2026-05-08
+**Botão "Reprocessar com regras atuais" sempre visível na aba de importação**
+- `app/db.py` — `listar_periodos()` passa a retornar o campo `id` do registro mais recente de cada período, eliminando a necessidade de consulta extra para carregar arquivos.
+- `pages/1_Importação.py` — auto-carrega `arquivos_fontes` do banco quando a sessão reinicia e o campo não está presente; tela inicial (sem sessão) exibe dois botões lado a lado: **Carregar resultado salvo** e **Reprocessar com regras atuais** (desabilitado se não houver arquivos salvos para o período).
+
+### V1.5.09 — 2026-05-08
+**Padronização da interpretação do campo "Plano de Saúde" da planilha de contratos**
+- `app/processamento.py` — nova função `_classificar_plano(vlr_raw) -> (tem_direito, copart_apos_exp)` substitui `_tem_direito_plano` e os sets `_AFIRMATIVOS_PLANO`/`_NEGATIVOS_PLANO`; interpreta por ordem de prioridade:
+  1. `"Sim com coparticipação após experiência"` → elegível após 90 dias da admissão (`copart_apos_exp = True`)
+  2. `"Sim com coparticipação imediato"` → elegível desde a admissão
+  3. `"Não"` / vazio / zero → sem direito
+  4. Valor numérico > 0 → elegível (plano com valor definido)
+  5. `"Sim"` / `"S"` / `"X"` genéricos → elegível
+- `ler_contratos` usa `_classificar_plano` em substituição à lógica anterior; `copart_apos_exp` segue alimentando a regra dos 90 dias em `cruzar()`.
+
+### V1.5.08 — 2026-05-08
+**Correção crítica: INDETERMINADO era detectado como DETERMINADO**
+- `app/processamento.py` — `"DETERMINADO" in "INDETERMINADO"` é `True` em Python (substring); todos os funcionários com contrato INDETERMINADO eram marcados como inelegíveis. Correção: `eh_determinado = "DETERMINADO" in norm and "INDETERMINADO" not in norm`. JEANE FONTINELE RIBEIRO DE SOUSA e demais casos com INDETERMINADO corrigidos.
+
+### V1.5.07 — 2026-05-08
+**Correção: funcionários com "Sim"/"X"/"S" na célula de plano apareciam como sem direito**
+- `app/processamento.py` — nova função `_tem_direito_plano()`: reconhece valor numérico > 0 OU indicadores textuais afirmativos ("Sim", "S", "X", "Possui", "Tem", "Ativo", "Incluso") como indicação de que o funcionário possui o plano; palavras negativas ("Não", "N", "0") e células vazias retornam False.
+- `ler_contratos` passou a usar `_tem_direito_plano()` em vez de `vlr > 0`, corrigindo casos como JEANE FONTINELE RIBEIRO DE SOUSA e outros com célula textual.
+
+### V1.5.06 — 2026-05-08
+**Regra específica do contrato 134**
+- `app/processamento.py` — elegibilidade: contrato 134 + INDETERMINADO → `tem_direito = True` (forçado, independente do valor na planilha); contrato 134 + DETERMINADO → cai na regra geral DETERMINADO → `tem_direito = False`.
+- Auditoria: 134 INDETERMINADO sem plano → Inconsistente via R1/R2; 134 DETERMINADO com cobrança → Inconsistente via bloco `_inelegivel_contrato`.
+
+### V1.5.05 — 2026-05-08
+**Regra dos 90 dias ("Sim com coparticipação após experiência")**
+- `app/processamento.py` — `ler_contratos`: quando o campo de plano de saúde contiver o texto "experiência" (ex: "Sim com coparticipação após experiência"), o funcionário é marcado com `copart_apos_exp = True`; o `vlr_contrato` permanece 0 mas `tem_direito = True` (condicional).
+- `app/processamento.py` — `cruzar()`: calcula a data de elegibilidade (admissão + 90 dias corridos) e compara com o primeiro dia do mês de referência da auditoria; se ainda em experiência, `Tem Direito` é sobrescrito para "Não" e `_aguarda_elegibilidade = True`; campo `Dt. Elegibilidade` exibido nas abas.
+- `app/regras.py` — nova regra: `_aguarda_elegibilidade = True` → se há cobrança → Inconsistente "Em período de experiência, elegível em [data]"; se sem cobrança → OK.
+- `pages/2_Auditoria.py` e `pages/5_Aprovação.py` — coluna `Dt. Elegibilidade` adicionada.
+
+### V1.5.04 — 2026-05-08
+**Regras de exceção TMG e lógica especial ANATACHA**
+- `app/processamento.py` — elegibilidade: contratos com `TMG` no nome → sem direito ao plano; exceção: `MAURO ALVES DA SILVA` tem direito mesmo em contrato TMG.
+- `app/processamento.py` — `cruzar()`: campo `_anatacha_especial` propagado em todos os resultados para identificar `ANATACHA CARDOSO ARAUJO`.
+- `app/regras.py` — R5 reformulado: para ANATACHA, compara `empresa (compra)` vs `mensalidade titular + dependentes (fatura)` e `funcionária (compra)` vs `coparticipações (fatura)`; para os demais mantém comparação empresa vs contrato.
+
 ### V1.5.03 — 2026-05-08
 **Regras de elegibilidade ao plano de saúde por modalidade contratual + divergência quando inelegível tem cobrança**
 - `app/processamento.py` — `ler_contratos`: substituída lista fixa `_CONTRATOS_INELEGIVEIS` por lógica baseada em palavras-chave:

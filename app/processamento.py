@@ -167,16 +167,75 @@ def _parse_brl(v) -> float:
         return 0.0
 
 
+def _classificar_plano(vlr_raw: str) -> tuple[bool, bool]:
+    """
+    Interpreta o campo 'Plano de Saúde' da planilha de contratos.
+    Retorna (tem_direito, copart_apos_exp).
+
+    Valores padronizados (ordem de prioridade):
+      "Sim com coparticipação após experiência"  → (True, True)   elegível após 90 dias da admissão
+      "Sim com coparticipação imediato"          → (True, False)  elegível desde a admissão
+      "Não" / vazio / zero                       → (False, False) sem direito
+      Valor numérico > 0                         → (True, False)  elegível (valor definido)
+      Outros "Sim" / "S" / "X" genéricos        → (True, False)  elegível (indicador afirmativo)
+    """
+    s = _norm(vlr_raw)
+
+    if not s or s in ("NAO", "N", "0", "-", "NONE", "NAN"):
+        return False, False
+
+    # "Sim com coparticipação após experiência" → aguarda 90 dias
+    if "EXPERIENCIA" in s:
+        return True, True
+
+    # "Sim com coparticipação imediato" → elegível desde a admissão
+    if "IMEDIATO" in s:
+        return True, False
+
+    # Indicador negativo genérico
+    if "NAO" in s:
+        return False, False
+
+    # Valor numérico
+    if _parse_brl(vlr_raw) > 0:
+        return True, False
+
+    # Indicadores afirmativos genéricos ("Sim", "S", "X", "Possui"…)
+    if any(s == a or s.startswith(a + " ") for a in ("SIM", "S", "X", "POSSUI", "TEM", "ATIVO")):
+        return True, False
+
+    return False, False
+
+
+# Formatos testados em ordem: DD/MM primeiro (padrão BR), depois ISO e variantes.
+# NUNCA usar fallback sem dayfirst — o pandas sem dayfirst usa formato americano (MM/DD)
+# e inverte dia e mês em datas ambíguas (ex: "07/05" → julho 5 em vez de maio 7).
+_DATE_FMTS_BR = [
+    "%d/%m/%Y", "%d/%m/%y",
+    "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d",
+    "%d-%m-%Y", "%d.%m.%Y",
+    "%d/%m/%Y %H:%M:%S",
+]
+
 def _fmt_data(v) -> str:
     if v is None or str(v).strip() in ("", "nan", "None"):
         return ""
+    s = str(v).strip()
+    for fmt in _DATE_FMTS_BR:
+        try:
+            ts = pd.to_datetime(s, format=fmt, errors="coerce")
+            if not pd.isna(ts):
+                return ts.strftime("%d/%m/%Y")
+        except Exception:
+            continue
+    # Último recurso: inferência com dayfirst=True APENAS (nunca sem dayfirst)
     try:
-        ts = pd.to_datetime(v, dayfirst=True, errors="coerce")
-        if pd.isna(ts):
-            ts = pd.to_datetime(v, errors="coerce")
-        return ts.strftime("%d/%m/%Y") if not pd.isna(ts) else str(v).strip()
+        ts = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if not pd.isna(ts):
+            return ts.strftime("%d/%m/%Y")
     except Exception:
-        return str(v).strip()
+        pass
+    return s
 
 
 def _str(v) -> str:
@@ -189,12 +248,18 @@ def _str(v) -> str:
 # ---------------------------------------------------------------------------
 
 # Regras de elegibilidade ao plano de saúde:
-# • Qualquer contrato com "DETERMINADO" no nome → sem direito (regra geral).
-# • Exceção: TERCEIRIZAÇÃO (det. ou indet.) + departamento com "PLANALTINA" ou "298" → COM direito.
-# • Demais modalidades → segue valor na planilha de contratos (vlr_contrato > 0).
+# • TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível (exceção prioritária).
+# • TMG → sem direito, exceto MAURO ALVES DA SILVA.
+# • Contrato 134 + INDETERMINADO → tem direito; 134 + DETERMINADO → sem direito.
+# • Qualquer DETERMINADO → sem direito (regra geral).
+# • Demais → segue planilha de contratos (vlr_contrato > 0).
 _PALAVRA_DETERMINADO   = "DETERMINADO"
 _PALAVRA_TERCEIRIZACAO = "TERCEIR"
+_PALAVRA_TMG           = "TMG"
+_CONTRATO_134          = "134"
 _DEPTOS_COM_EXCECAO    = ("PLANALTINA", "298")
+_MAURO_EXCECAO_NORM    = "MAURO ALVES DA SILVA"   # exceção TMG — tem direito ao plano
+_ANATACHA_NORM         = "ANATACHA CARDOSO ARAUJO" # regra especial: mensalidade=empresa, copart=funcionária
 
 CONTRATOS_HEADER_GROUPS = [
     ("funcionario", "funcionária", "nome funcionario", "nome da funcionária"),
@@ -283,24 +348,38 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
                            "NOME FUNCIONARIO", "NOME DO FUNCIONARIO"):
             continue
 
-        vlr = _parse_brl(row.get(c["vlr_contrato"]) if c["vlr_contrato"] else 0)
-        tem_direito = vlr > 0
+        vlr_raw = str(row.get(c["vlr_contrato"]) if c["vlr_contrato"] else "")
+        vlr = _parse_brl(vlr_raw)
+        tem_direito, copart_apos_exp = _classificar_plano(vlr_raw)
 
         departamento  = _str(row.get(c["departamento"]) if c["departamento"] else "")
         contrato_adm  = _str(row.get(c["contrato_adm"]) if c["contrato_adm"] else "")
         dept_norm     = _norm(departamento)
         contrato_norm = _norm(contrato_adm)
 
-        eh_determinado   = _PALAVRA_DETERMINADO   in contrato_norm
+        # "DETERMINADO" é substring de "INDETERMINADO" — excluir explicitamente
+        eh_determinado   = _PALAVRA_DETERMINADO in contrato_norm and "INDETERMINADO" not in contrato_norm
         eh_terceirizacao = _PALAVRA_TERCEIRIZACAO in contrato_norm
+        eh_tmg           = _PALAVRA_TMG           in contrato_norm
+        eh_134           = _CONTRATO_134          in contrato_norm
         eh_depto_excecao = any(kw in dept_norm for kw in _DEPTOS_COM_EXCECAO)
+        func_norm_val    = _norm(func)
+        eh_mauro_excecao = func_norm_val == _MAURO_EXCECAO_NORM
 
         if eh_terceirizacao and eh_depto_excecao:
-            # Exceção: TERCEIRIZAÇÃO + depto especial (PLANALTINA ou 298) → sempre elegível
+            # Exceção prioritária: TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível
+            inelegivel_tipo = False
+            tem_direito     = True
+        elif eh_tmg and not eh_mauro_excecao:
+            # Contratos TMG → sem direito (exceto MAURO ALVES DA SILVA)
+            inelegivel_tipo = True
+            tem_direito     = False
+        elif eh_134 and not eh_determinado:
+            # Contrato 134 + INDETERMINADO → tem direito ao plano
             inelegivel_tipo = False
             tem_direito     = True
         elif eh_determinado:
-            # Regra geral: qualquer DETERMINADO → sem direito, independente de terceirização
+            # Regra geral: qualquer DETERMINADO (inclusive 134 DETERMINADO) → sem direito
             inelegivel_tipo = True
             tem_direito     = False
         else:
@@ -319,10 +398,11 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             "departamento":       departamento,
             "contrato_adm":       contrato_adm,
             "tem_direito":        tem_direito,
-            "vlr_contrato":       vlr,
-            "admissao":           admissao,
-            "demissao":           demissao,
-            "inelegivel_contrato": inelegivel_tipo,
+            "vlr_contrato":           vlr,
+            "admissao":               admissao,
+            "demissao":               demissao,
+            "inelegivel_contrato":    inelegivel_tipo,
+            "copart_apos_exp":        copart_apos_exp,
         })
 
     return pd.DataFrame(rows)
@@ -658,6 +738,23 @@ def ler_compra(path, col_map: dict = None) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Helpers internos
+# ---------------------------------------------------------------------------
+
+def _dt_ref_periodo(periodo: str):
+    """Retorna o primeiro dia do mês de referência da auditoria (ex: '04/2026' → 2026-04-01)."""
+    try:
+        partes = str(periodo or "").strip().split("/")
+        mes = int(partes[0])
+        ano = int(partes[1])
+        if ano < 100:
+            ano += 2000
+        return pd.Timestamp(year=ano, month=mes, day=1)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Matching por nome
 # ---------------------------------------------------------------------------
 
@@ -701,6 +798,8 @@ def cruzar(df_cont: pd.DataFrame,
     compra_usadas = set()
     resultado     = []
 
+    dt_ref = _dt_ref_periodo(periodo)   # primeiro dia do mês de referência (para regra dos 90 dias)
+
     # ── 1. Funcionários do contrato ─────────────────────────────────────────
     for _, cont in df_cont.iterrows():
         nome_c = cont["_norm_func"]
@@ -735,13 +834,30 @@ def cruzar(df_cont: pd.DataFrame,
         demissao  = cont.get("demissao", "")
         desligado = bool(demissao and str(demissao).strip() not in ("", "nan"))
 
+        # ── Regra dos 90 dias ──────────────────────────────────────────────
+        copart_apos_exp = bool(cont.get("copart_apos_exp", False))
+        aguarda_elegib  = False
+        data_elegib_str = ""
+        if copart_apos_exp and dt_ref:
+            adm_str = str(cont.get("admissao", "")).strip()
+            if adm_str and adm_str not in ("", "nan"):
+                dt_adm = pd.to_datetime(adm_str, dayfirst=True, errors="coerce")
+                if not pd.isna(dt_adm):
+                    dt_elegib = dt_adm + pd.Timedelta(days=90)
+                    data_elegib_str = dt_elegib.strftime("%d/%m/%Y")
+                    aguarda_elegib = dt_elegib > dt_ref
+
+        tem_dir_efetivo = cont["tem_direito"]
+        if copart_apos_exp and aguarda_elegib:
+            tem_dir_efetivo = False   # ainda em experiência → sem direito no período
+
         resultado.append({
             "Funcionário":        cont["funcionario"],
             "Empresa":            cont.get("empresa", ""),
             "Departamento":       cont["departamento"],
             "Contrato Adm.":      cont.get("contrato_adm", ""),
             "Cod. Funcionário":   cont["cod_func"],
-            "Tem Direito":        "Sim" if cont["tem_direito"] else "Não",
+            "Tem Direito":        "Sim" if tem_dir_efetivo else "Não",
             "Está na Fatura":     "Sim" if na_fatura else "Não",
             "Está na Compra":     "Sim" if na_compra else "Não",
             "Valor Fatura":       vlr_fat,
@@ -756,12 +872,16 @@ def cruzar(df_cont: pd.DataFrame,
             "_vlr_copart_fat":      vlr_copart_fat,
             "Dt. Admissão":       cont.get("admissao", ""),
             "Dt. Demissão":       demissao,
+            "Dt. Elegibilidade":  data_elegib_str,
             "Período":            periodo,
             "_na_fatura":             na_fatura,
             "_na_compra":             na_compra,
             "_desligado":             desligado,
             "_sem_contrato":          False,
             "_inelegivel_contrato":   bool(cont.get("inelegivel_contrato", False)),
+            "_anatacha_especial":     nome_c == _ANATACHA_NORM,
+            "_aguarda_elegibilidade": aguarda_elegib,
+            "_copart_apos_exp":       copart_apos_exp,
         })
 
     # ── 2. Na fatura mas sem contrato ───────────────────────────────────────
@@ -800,11 +920,15 @@ def cruzar(df_cont: pd.DataFrame,
             "_vlr_copart_fat":        float(fat["vlr_copart"]),
             "Dt. Admissão":           "",
             "Dt. Demissão":           "",
+            "Dt. Elegibilidade":      "",
             "Período":                periodo,
             "_na_fatura":             True,
             "_na_compra":             comp is not None,
             "_desligado":             False,
             "_sem_contrato":          True,
+            "_anatacha_especial":     False,
+            "_aguarda_elegibilidade": False,
+            "_copart_apos_exp":       False,
         })
 
     # ── 3. Na compra mas sem contrato e sem fatura ──────────────────────────
@@ -832,11 +956,15 @@ def cruzar(df_cont: pd.DataFrame,
             "_vlr_copart_fat":        0.0,
             "Dt. Admissão":           "",
             "Dt. Demissão":           "",
+            "Dt. Elegibilidade":      "",
             "Período":                periodo,
             "_na_fatura":             False,
             "_na_compra":             True,
             "_desligado":             False,
             "_sem_contrato":          True,
+            "_anatacha_especial":     False,
+            "_aguarda_elegibilidade": False,
+            "_copart_apos_exp":       False,
         })
 
     return pd.DataFrame(resultado)
