@@ -66,14 +66,19 @@ def _brl(v):
     except Exception:
         return "—"
 
-k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-k1.metric("Total",           stats.get("total", 0))
-k2.metric("✅ OK",           stats.get("ok", 0))
-k3.metric("⚠️ Inconsist.",   stats.get("inconsistente", 0))
-k4.metric("Na Fatura",       stats.get("na_fatura", 0))
-k5.metric("Na Compra",       stats.get("na_compra", 0))
-k6.metric("Total Fatura",    _brl(stats.get("total_fatura", 0)))
-k7.metric("Total Compra",    _brl(stats.get("total_compra", 0)))
+_n_inc   = stats.get("inconsistente", 0)
+_n_just  = sum(1 for f in df[df["Status"] == "Inconsistente"]["Funcionário"] if _just_aud.get(f, "").strip())
+_n_pend  = _n_inc - _n_just
+
+k1, k2, k3, k4, k5, k6, k7, k8 = st.columns(8)
+k1.metric("Total",             stats.get("total", 0))
+k2.metric("✅ OK",             stats.get("ok", 0))
+k3.metric("⚠️ Inconsist.",     _n_inc)
+k4.metric("⏳ Pendentes",      _n_pend,  delta=f"-{_n_just} justificados" if _n_just else None, delta_color="inverse")
+k5.metric("Na Fatura",         stats.get("na_fatura", 0))
+k6.metric("Na Compra",         stats.get("na_compra", 0))
+k7.metric("Total Fatura",      _brl(stats.get("total_fatura", 0)))
+k8.metric("Total Compra",      _brl(stats.get("total_compra", 0)))
 
 st.divider()
 

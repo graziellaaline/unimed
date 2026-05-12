@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import sys
 from pathlib import Path
 
@@ -8,6 +9,27 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ui import barra_lateral
 from app import db
+
+_COL_CFG_PATH = Path(__file__).resolve().parent.parent / "dados" / "col_config_aprovacao.json"
+_COLS_DEFAULT = [
+    "☑", "Sit.", "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
+    "Dt. Admissão", "Dt. Demissão", "Dt. Elegibilidade",
+    "Inconsistência", "Ação Sugerida", "Justificativa",
+]
+
+def _col_order_load() -> list:
+    try:
+        if _COL_CFG_PATH.exists():
+            saved = json.loads(_COL_CFG_PATH.read_text(encoding="utf-8"))
+            extras = [c for c in _COLS_DEFAULT if c not in saved]
+            return saved + extras
+    except Exception:
+        pass
+    return list(_COLS_DEFAULT)
+
+def _col_order_save(order: list):
+    _COL_CFG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _COL_CFG_PATH.write_text(json.dumps(order, ensure_ascii=False, indent=2), encoding="utf-8")
 
 st.set_page_config(page_title="Aprovação — Auditoria Unimed", layout="wide")
 barra_lateral()
@@ -117,12 +139,26 @@ filtro_causas = ["Todas"] + sorted(
     [v for v in pendentes["Inconsistência"].dropna().unique().tolist() if str(v).strip()]
 )
 
-fc1, fc2, fc3 = st.columns([3, 3, 2])
+# Contadores para o filtro de situação
+_total_pend = len(pendentes)
+_total_just = sum(1 for f in pendentes["Funcionário"].tolist() if just_salvas.get(f, "").strip())
+_total_sem  = _total_pend - _total_just
+
+fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2])
 with fc1:
-    causa_sel = st.selectbox("Inconsistência", filtro_causas)
+    sit_sel = st.selectbox(
+        "Situação",
+        [
+            f"Todas ({_total_pend})",
+            f"⏳ Pendentes ({_total_sem})",
+            f"✅ Justificados ({_total_just})",
+        ],
+    )
 with fc2:
-    f_nome = st.text_input("Funcionário (parte do nome)")
+    causa_sel = st.selectbox("Inconsistência", filtro_causas)
 with fc3:
+    f_nome = st.text_input("Funcionário (parte do nome)")
+with fc4:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("♻ Reaplicar modelos salvos", use_container_width=True):
         qtd, _ = _aplicar_modelos_exatos(salvar_no_banco=True)
@@ -133,6 +169,14 @@ with fc3:
             st.info("Nenhuma justificativa reutilizável encontrada.")
 
 pendentes_exibidas = pendentes.copy()
+if "Pendentes" in sit_sel:
+    pendentes_exibidas = pendentes_exibidas[
+        pendentes_exibidas["Funcionário"].map(lambda f: not just_salvas.get(f, "").strip())
+    ]
+elif "Justificados" in sit_sel:
+    pendentes_exibidas = pendentes_exibidas[
+        pendentes_exibidas["Funcionário"].map(lambda f: bool(just_salvas.get(f, "").strip()))
+    ]
 if causa_sel != "Todas":
     pendentes_exibidas = pendentes_exibidas[pendentes_exibidas["Inconsistência"] == causa_sel]
 if f_nome:
@@ -140,7 +184,31 @@ if f_nome:
         pendentes_exibidas["Funcionário"].str.contains(f_nome, case=False, na=False)
     ]
 
-st.caption(f"**{len(pendentes_exibidas)}** pendência(s) exibida(s)")
+st.caption(f"**{len(pendentes_exibidas)}** registro(s) exibido(s)")
+
+# ── Ordem das colunas (persistida em arquivo) ─────────────────────────────────
+if "col_order_aprov" not in st.session_state:
+    st.session_state["col_order_aprov"] = _col_order_load()
+
+with st.expander("📋 Ordem das colunas"):
+    _ordem = list(st.session_state["col_order_aprov"])
+    _changed = False
+    for _i, _cn in enumerate(_ordem):
+        _ca, _cb, _cc = st.columns([8, 1, 1])
+        _ca.caption(f"{_i + 1}. {_cn}")
+        if _i > 0 and _cb.button("↑", key=f"col_up_{_i}"):
+            _ordem[_i - 1], _ordem[_i] = _ordem[_i], _ordem[_i - 1]
+            _changed = True
+        if _i < len(_ordem) - 1 and _cc.button("↓", key=f"col_dn_{_i}"):
+            _ordem[_i], _ordem[_i + 1] = _ordem[_i + 1], _ordem[_i]
+            _changed = True
+    if _changed:
+        st.session_state["col_order_aprov"] = _ordem
+        _col_order_save(_ordem)
+        st.rerun()
+    if st.button("💾 Salvar esta ordem", key="salvar_col_order"):
+        _col_order_save(st.session_state["col_order_aprov"])
+        st.success("Ordem salva!")
 
 # ── Tabela editável ───────────────────────────────────────────────────────────
 COLS_INFO = [c for c in [
@@ -168,9 +236,12 @@ col_cfg = {
 }
 cols_bloqueadas = [c for c in df_tab.columns if c not in ("☑", "Justificativa")]
 
+_col_order_ativa = [c for c in st.session_state["col_order_aprov"] if c in df_tab.columns]
+
 edited = st.data_editor(
     df_tab,
     column_config=col_cfg,
+    column_order=_col_order_ativa,
     disabled=cols_bloqueadas,
     use_container_width=True,
     hide_index=True,
@@ -184,6 +255,7 @@ with sv1:
     salvar_modelo_individual = st.checkbox(
         "Gravar justificativas para meses futuros ao salvar",
         key="modelo_individual",
+        value=True,
     )
 with sv2:
     if st.button("💾 Salvar edições da tabela", use_container_width=True, type="primary"):
@@ -227,6 +299,7 @@ with la1:
     salvar_modelo_lote = st.checkbox(
         "Gravar para meses futuros (Funcionário + Inconsistência idênticos)",
         key="save_batch_template",
+        value=True,
     )
 with la2:
     st.markdown("<br><br>", unsafe_allow_html=True)

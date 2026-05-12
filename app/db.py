@@ -204,27 +204,48 @@ def carregar_arquivos_auditoria(auditoria_id: int) -> dict:
 
 def migrar_justificativas(novo_id: int, periodo: str, cliente: str = ""):
     """
-    Copia justificativas da auditoria anterior mais recente do mesmo período
-    para o novo audit_id. Garante que reprocessamentos não percam aprovações.
-    Só copia registros que ainda não existem no novo ID.
+    Pré-popula justificativas do novo audit_id a partir de duas fontes, em ordem:
+
+    1. Reprocessamento (mesmo período): copia do audit anterior do mesmo mês —
+       garante que aprovações não se percam ao reprocessar.
+
+    2. Mês novo (sem histórico do mesmo período): copia dos modelos salvos
+       (justificativas_modelo), que acumulam aprovações de todos os meses anteriores.
+       O usuário só precisa validar o que já foi pré-preenchido.
+
+    Em ambos os casos, nunca sobrescreve registros já existentes no novo ID.
     """
     con = _conn()
     cur = con.cursor()
+
+    # ── Fonte 1: mesmo período (reprocessamento) ──────────────────────────────
     cur.execute(
         "SELECT id FROM auditorias WHERE periodo=? AND (cliente=? OR ?='') AND id != ? "
         "ORDER BY processado_em DESC LIMIT 1",
         (periodo, cliente or "", cliente or "", novo_id),
     )
     row = cur.fetchone()
-    if not row:
-        con.close()
-        return
-    id_anterior = row[0]
-    cur.execute(
-        "SELECT funcionario, descricao, justificativa FROM justificativas WHERE auditoria_id=?",
-        (id_anterior,),
-    )
-    for func, desc, just in cur.fetchall():
+
+    if row:
+        id_anterior = row[0]
+        cur.execute(
+            "SELECT funcionario, descricao, justificativa FROM justificativas WHERE auditoria_id=?",
+            (id_anterior,),
+        )
+        fontes = cur.fetchall()
+    else:
+        # ── Fonte 2: modelos persistidos de meses anteriores ─────────────────
+        cur.execute(
+            "SELECT funcionario, descricao, justificativa FROM justificativas_modelo "
+            "WHERE (cliente=? OR cliente='') ORDER BY atualizado_em DESC",
+            (cliente or "",),
+        )
+        fontes = cur.fetchall()
+
+    vistos: set = set()
+    for func, desc, just in fontes:
+        if func in vistos:
+            continue
         cur.execute(
             "SELECT COUNT(*) FROM justificativas WHERE auditoria_id=? AND funcionario=?",
             (novo_id, func),
@@ -235,6 +256,8 @@ def migrar_justificativas(novo_id: int, periodo: str, cliente: str = ""):
                 "VALUES (?, ?, ?, ?, ?)",
                 (novo_id, func, desc, just, datetime.now().isoformat()),
             )
+            vistos.add(func)
+
     con.commit()
     con.close()
 

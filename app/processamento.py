@@ -175,9 +175,13 @@ def _classificar_plano(vlr_raw: str) -> tuple[bool, bool]:
     Valores padronizados (ordem de prioridade):
       "Sim com coparticipação após experiência"  → (True, True)   elegível após 90 dias da admissão
       "Sim com coparticipação imediato"          → (True, False)  elegível desde a admissão
-      "Não" / vazio / zero                       → (False, False) sem direito
       Valor numérico > 0                         → (True, False)  elegível (valor definido)
+      "Não" / vazio / zero                       → (False, False) sem direito
       Outros "Sim" / "S" / "X" genéricos        → (True, False)  elegível (indicador afirmativo)
+
+    ATENÇÃO: o teste numérico vem ANTES do teste de "NAO" no texto, porque alguns campos
+    descritivos contêm frases como "450,00 - Cargo X - Pesquisa NÃO tem plano" onde o
+    valor 450 indica elegibilidade e "NÃO" faz parte do nome do cargo/categoria.
     """
     s = _norm(vlr_raw)
 
@@ -192,13 +196,14 @@ def _classificar_plano(vlr_raw: str) -> tuple[bool, bool]:
     if "IMEDIATO" in s:
         return True, False
 
-    # Indicador negativo genérico
-    if "NAO" in s:
-        return False, False
-
-    # Valor numérico
+    # Valor numérico — verificado ANTES de "NAO" para não ser enganado por descrições
+    # do tipo "450,00 - Auxiliar Agrícola II - Pesquisa NÃO tem plano"
     if _parse_brl(vlr_raw) > 0:
         return True, False
+
+    # Indicador negativo genérico (só chega aqui se não houver valor numérico)
+    if "NAO" in s:
+        return False, False
 
     # Indicadores afirmativos genéricos ("Sim", "S", "X", "Possui"…)
     if any(s == a or s.startswith(a + " ") for a in ("SIM", "S", "X", "POSSUI", "TEM", "ATIVO")):
@@ -249,14 +254,16 @@ def _str(v) -> str:
 
 # Regras de elegibilidade ao plano de saúde:
 # • TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível (exceção prioritária).
+# • TERCEIRIZAÇÃO + INDETERMINADO + "Sim" na planilha → elegível desde a admissão (sem carência).
+# • INDETERMINADO puro (sem TERCEIRIZAÇÃO) + tem direito na planilha → elegível após 90 dias da admissão.
 # • TMG → sem direito, exceto MAURO ALVES DA SILVA.
-# • Contrato 134 + INDETERMINADO → tem direito; 134 + DETERMINADO → sem direito.
+# • Contratos especiais (134, 119…) + INDETERMINADO → tem direito; + DETERMINADO → sem direito.
 # • Qualquer DETERMINADO → sem direito (regra geral).
 # • Demais → segue planilha de contratos (vlr_contrato > 0).
 _PALAVRA_DETERMINADO   = "DETERMINADO"
 _PALAVRA_TERCEIRIZACAO = "TERCEIR"
 _PALAVRA_TMG           = "TMG"
-_CONTRATO_134          = "134"
+_CONTRATOS_ESPECIAIS   = {"134", "119"}   # contratos com direito por código, exceto se DETERMINADO
 _DEPTOS_COM_EXCECAO    = ("PLANALTINA", "298")
 _MAURO_EXCECAO_NORM    = "MAURO ALVES DA SILVA"   # exceção TMG — tem direito ao plano
 _ANATACHA_NORM         = "ANATACHA CARDOSO ARAUJO" # regra especial: mensalidade=empresa, copart=funcionária
@@ -360,8 +367,8 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
         # "DETERMINADO" é substring de "INDETERMINADO" — excluir explicitamente
         eh_determinado   = _PALAVRA_DETERMINADO in contrato_norm and "INDETERMINADO" not in contrato_norm
         eh_terceirizacao = _PALAVRA_TERCEIRIZACAO in contrato_norm
-        eh_tmg           = _PALAVRA_TMG           in contrato_norm
-        eh_134           = _CONTRATO_134          in contrato_norm
+        eh_tmg           = _PALAVRA_TMG in contrato_norm
+        eh_especial      = any(cod in contrato_norm for cod in _CONTRATOS_ESPECIAIS)
         eh_depto_excecao = any(kw in dept_norm for kw in _DEPTOS_COM_EXCECAO)
         func_norm_val    = _norm(func)
         eh_mauro_excecao = func_norm_val == _MAURO_EXCECAO_NORM
@@ -370,22 +377,31 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             # Exceção prioritária: TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível
             inelegivel_tipo = False
             tem_direito     = True
+        elif eh_terceirizacao and "INDETERMINADO" in contrato_norm and tem_direito:
+            # TERCEIRIZAÇÃO + INDETERMINADO com "Sim" na planilha → elegível desde a admissão
+            inelegivel_tipo = False
+            copart_apos_exp = False
         elif eh_tmg and not eh_mauro_excecao:
             # Contratos TMG → sem direito (exceto MAURO ALVES DA SILVA)
             inelegivel_tipo = True
             tem_direito     = False
-        elif eh_134 and not eh_determinado:
-            # Contrato 134 + INDETERMINADO → tem direito ao plano
+        elif eh_especial and not eh_determinado:
+            # Contratos especiais (134, 119…) + INDETERMINADO → tem direito imediato
             inelegivel_tipo = False
             tem_direito     = True
+            copart_apos_exp = False   # direito imediato — ignora texto "após experiência"
         elif eh_determinado:
-            # Regra geral: qualquer DETERMINADO (inclusive 134 DETERMINADO) → sem direito
+            # Regra geral: qualquer DETERMINADO → sem direito
             inelegivel_tipo = True
             tem_direito     = False
+        elif "INDETERMINADO" in contrato_norm and tem_direito:
+            # INDETERMINADO puro (sem TERCEIRIZAÇÃO) → elegível após 90 dias da admissão
+            inelegivel_tipo = False
+            copart_apos_exp = True
         else:
             # Demais modalidades → segue planilha de contratos
             inelegivel_tipo = False
-            # tem_direito já definido por vlr > 0
+            # tem_direito já definido por _classificar_plano
 
         admissao = _fmt_data(row.get(c["admissao"]) if c["admissao"] else "")
         demissao = _fmt_data(row.get(c["demissao"]) if c["demissao"] else "")

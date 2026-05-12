@@ -21,8 +21,12 @@ if not periodos:
     st.stop()
 
 # ── Lista de histórico ────────────────────────────────────────────────────────
-df_hist = pd.DataFrame(periodos)
-df_hist.columns = ["Período", "Cliente", "Processado em", "Versões"]
+df_hist = pd.DataFrame([{
+    "Período":        p["periodo"],
+    "Cliente":        p["cliente"],
+    "Processado em":  p["processado_em"],
+    "Versões":        p["versoes"],
+} for p in periodos])
 st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
 st.divider()

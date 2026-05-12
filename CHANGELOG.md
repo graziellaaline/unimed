@@ -12,6 +12,45 @@
 
 ## Histórico
 
+### V1.5.27 — 2026-05-12
+**Auditoria: card "⏳ Pendentes" nos KPIs**
+- `pages/2_Auditoria.py` — adicionado card "⏳ Pendentes" ao lado de "⚠️ Inconsist.", mostrando quantas inconsistências ainda não têm justificativa. Delta exibe quantas já foram justificadas.
+
+### V1.5.26 — 2026-05-12
+**Aprovação: ordem de colunas persistida + correção de erro no Histórico**
+- `pages/5_Aprovação.py` — expander "📋 Ordem das colunas" com botões ↑↓ para reposicionar; ordem salva automaticamente em `dados/col_config_aprovacao.json` e aplicada via `column_order` no data_editor.
+- `pages/4_Histórico.py` — corrigido ValueError: `df_hist.columns` tinha 4 nomes mas o DataFrame tinha 5 colunas (incluindo `id`). Substituído por construção explícita do dict.
+
+### V1.5.25 — 2026-05-12
+**Aprovação: filtro de situação (Pendentes / Justificados / Todos)**
+- `pages/5_Aprovação.py` — adicionado selectbox "Situação" com contadores dinâmicos: `Todas (N)`, `⏳ Pendentes (N)`, `✅ Justificados (N)`. Permite focar rapidamente nas pendências ainda sem justificativa ou revisar as já aprovadas.
+
+### V1.5.24 — 2026-05-12
+**Justificativas: cópia automática para meses futuros como comportamento padrão**
+- `pages/5_Aprovação.py` — checkboxes "Gravar justificativas para meses futuros" (individual e lote) agora iniciam marcados por padrão. Toda justificativa salva é automaticamente gravada no banco de modelos; desmarcar é a exceção.
+- `app/db.py` — `migrar_justificativas` expandida: ao processar um mês novo (sem histórico do mesmo período), pré-popula automaticamente a partir dos modelos salvos de meses anteriores, filtrando por cliente. O usuário só precisa validar o que já vem preenchido.
+
+### V1.5.23 — 2026-05-12
+**Correção crítica: _classificar_plano ignorava valor numérico quando havia "NÃO" no texto**
+- `app/processamento.py` — teste numérico (`_parse_brl > 0`) movido para ANTES do teste `"NAO" in s`. Campos como "450,00 - Auxiliar Agrícola II - Pesquisa NÃO tem plano" eram incorretamente classificados como sem direito porque "NAO" aparecia no texto descritivo do cargo/categoria. Agora o valor 450 é lido primeiro e prevalece.
+
+### V1.5.22 — 2026-05-12
+**Correção: TERCEIRIZAÇÃO INDETERMINADO respeita planilha de contratos**
+- `app/processamento.py` — restaurada condição `and tem_direito`: contrato TERCEIRIZAÇÃO + INDETERMINADO só concede direito ao plano se a planilha de contratos tiver "Sim" na coluna de plano de saúde. Sem "Sim" → sem direito. Com "Sim" → elegível desde a admissão (sem carência).
+
+### V1.5.21 — 2026-05-12
+**Elegibilidade: TERCEIRIZAÇÃO INDETERMINADO → regra absoluta, sem dependência da planilha**
+- `app/processamento.py` — removida condição `and tem_direito` do branch TERCEIRIZAÇÃO + INDETERMINADO. Agora qualquer contrato com essas palavras no campo "Contrato ADM" garante `tem_direito = True` e `copart_apos_exp = False` (elegível desde a admissão), independente do que estiver preenchido na coluna de plano de saúde da planilha de contratos.
+
+### V1.5.20 — 2026-05-12
+**Elegibilidade: regras de carência por tipo contratual**
+- `app/processamento.py` — TERCEIRIZAÇÃO + INDETERMINADO com direito na planilha → `copart_apos_exp = False` (elegível desde a admissão, sem carência).
+- `app/processamento.py` — INDETERMINADO puro (sem TERCEIRIZAÇÃO) com direito na planilha → `copart_apos_exp = True` (elegível após 90 dias da admissão), independente do que estiver escrito na planilha.
+
+### V1.5.18 — 2026-05-08
+**Contratos especiais 134 e 119: elegibilidade corrigida**
+- `app/processamento.py` — `_CONTRATO_134` substituído por `_CONTRATOS_ESPECIAIS = {"134", "119"}`; a regra "contrato especial + INDETERMINADO → tem direito imediato" agora cobre 134 e 119; `copart_apos_exp` é zerado para esses contratos (direito imediato, sem espera de 90 dias).
+
 ### V1.5.17 — 2026-05-08
 **Auditoria: coluna Justificado, filtro e cor azul para linhas já justificadas**
 - `pages/2_Auditoria.py` — carrega justificativas do banco (por `auditoria_id` ou fallback por período) e adiciona coluna `Justificado` (Sim/Não) a cada linha.
