@@ -19,6 +19,7 @@ Use o menu lateral para navegar:
 |--------|--------|
 | **1 · Importação** | Carregue os arquivos e processe a auditoria |
 | **2 · Auditoria** | Tabela completa com filtros, KPIs e exportação |
+| **3 · Exclusões do Mês** | Quem saiu da fatura comparado ao mês anterior |
 | **3 · Inclusões do Mês** | Relatório de novos beneficiários no período |
 | **4 · Histórico** | Consulte e recarregue auditorias anteriores |
 | **5 · Aprovação** | Justifique pendências e aprove o fechamento |

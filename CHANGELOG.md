@@ -12,6 +12,11 @@
 
 ## Histórico
 
+### V1.6.0 — 2026-05-12
+**Nova página: 3 · Exclusões do Mês**
+- `pages/3_Exclusões.py` — compara os titulares na fatura do período atual com os de um período anterior selecionável. Lista quem saiu do plano (estava antes, não está agora). Inclui KPIs (titulares antes × depois × exclusões), filtros por empresa/departamento/contrato e tabela com dados do período anterior.
+- `main.py` — tabela de navegação atualizada.
+
 ### V1.5.27 — 2026-05-12
 **Auditoria: card "⏳ Pendentes" nos KPIs**
 - `pages/2_Auditoria.py` — adicionado card "⏳ Pendentes" ao lado de "⚠️ Inconsist.", mostrando quantas inconsistências ainda não têm justificativa. Delta exibe quantas já foram justificadas.
