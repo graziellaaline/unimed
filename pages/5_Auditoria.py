@@ -12,7 +12,7 @@ from app import db
 
 st.set_page_config(page_title="Auditoria — Unimed", layout="wide")
 barra_lateral()
-st.header("2 · Resultado da Auditoria")
+st.header("5 · Resultado da Auditoria")
 
 # ── Auto-carregar do banco se sessão estiver vazia ────────────────────────────
 if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:

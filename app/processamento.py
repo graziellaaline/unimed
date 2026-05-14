@@ -27,6 +27,11 @@ def _norm(s) -> str:
     return " ".join("".join(c for c in nfkd if not unicodedata.combining(c)).split())
 
 
+def _limpar_cpf(s: str) -> str:
+    """Retorna apenas os dígitos do CPF (remove pontos, traços, barras)."""
+    return "".join(c for c in str(s or "") if c.isdigit())
+
+
 def _encontrar_col(df: pd.DataFrame, *keywords) -> Optional[str]:
     for kw in keywords:
         kw_n = _norm(kw).lower()
@@ -255,6 +260,7 @@ def _str(v) -> str:
 # Regras de elegibilidade ao plano de saúde:
 # • TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível (exceção prioritária).
 # • TERCEIRIZAÇÃO + INDETERMINADO + "Sim" na planilha → elegível desde a admissão (sem carência).
+# • INDETERMINADO puro (sem TERCEIRIZAÇÃO) + depto MONS/BREED → elegível imediato (sem carência de 90 dias).
 # • INDETERMINADO puro (sem TERCEIRIZAÇÃO) + tem direito na planilha → elegível após 90 dias da admissão.
 # • TMG → sem direito, exceto MAURO ALVES DA SILVA.
 # • Contratos especiais (134, 119…) + INDETERMINADO → tem direito; + DETERMINADO → sem direito.
@@ -265,6 +271,7 @@ _PALAVRA_TERCEIRIZACAO = "TERCEIR"
 _PALAVRA_TMG           = "TMG"
 _CONTRATOS_ESPECIAIS   = {"134", "119"}   # contratos com direito por código, exceto se DETERMINADO
 _DEPTOS_COM_EXCECAO    = ("PLANALTINA", "298")
+_DEPTOS_MONS_BREED     = ("MONS", "BREED")  # depto deve conter AMBAS as palavras — ver eh_depto_mons_breed
 _MAURO_EXCECAO_NORM    = "MAURO ALVES DA SILVA"   # exceção TMG — tem direito ao plano
 _ANATACHA_NORM         = "ANATACHA CARDOSO ARAUJO" # regra especial: mensalidade=empresa, copart=funcionária
 
@@ -365,13 +372,14 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
         contrato_norm = _norm(contrato_adm)
 
         # "DETERMINADO" é substring de "INDETERMINADO" — excluir explicitamente
-        eh_determinado   = _PALAVRA_DETERMINADO in contrato_norm and "INDETERMINADO" not in contrato_norm
-        eh_terceirizacao = _PALAVRA_TERCEIRIZACAO in contrato_norm
-        eh_tmg           = _PALAVRA_TMG in contrato_norm
-        eh_especial      = any(cod in contrato_norm for cod in _CONTRATOS_ESPECIAIS)
-        eh_depto_excecao = any(kw in dept_norm for kw in _DEPTOS_COM_EXCECAO)
-        func_norm_val    = _norm(func)
-        eh_mauro_excecao = func_norm_val == _MAURO_EXCECAO_NORM
+        eh_determinado    = _PALAVRA_DETERMINADO in contrato_norm and "INDETERMINADO" not in contrato_norm
+        eh_terceirizacao  = _PALAVRA_TERCEIRIZACAO in contrato_norm
+        eh_tmg            = _PALAVRA_TMG in contrato_norm
+        eh_especial       = any(cod in contrato_norm for cod in _CONTRATOS_ESPECIAIS)
+        eh_depto_excecao  = any(kw in dept_norm for kw in _DEPTOS_COM_EXCECAO)
+        eh_depto_mons_breed = all(kw in dept_norm for kw in _DEPTOS_MONS_BREED)
+        func_norm_val     = _norm(func)
+        eh_mauro_excecao  = func_norm_val == _MAURO_EXCECAO_NORM
 
         if eh_terceirizacao and eh_depto_excecao:
             # Exceção prioritária: TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível
@@ -394,6 +402,10 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             # Regra geral: qualquer DETERMINADO → sem direito
             inelegivel_tipo = True
             tem_direito     = False
+        elif "INDETERMINADO" in contrato_norm and not eh_terceirizacao and eh_depto_mons_breed and tem_direito:
+            # INDETERMINADO + depto MONS/BREED → adesão imediata (sem carência de 90 dias)
+            inelegivel_tipo = False
+            copart_apos_exp = False
         elif "INDETERMINADO" in contrato_norm and tem_direito:
             # INDETERMINADO puro (sem TERCEIRIZAÇÃO) → elegível após 90 dias da admissão
             inelegivel_tipo = False
@@ -421,7 +433,16 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             "copart_apos_exp":        copart_apos_exp,
         })
 
-    return pd.DataFrame(rows)
+    df_result = pd.DataFrame(rows)
+    # Remove cadastro duplicado do mesmo funcionário (mesmo cod_func + mesmo nome).
+    # Não toca em casos onde cod_func igual = pessoas DIFERENTES de empresas distintas.
+    if not df_result.empty:
+        _mask_cod = df_result["cod_func"].str.strip() != ""
+        df_com = df_result[_mask_cod].drop_duplicates(
+            subset=["cod_func", "_norm_func"], keep="first"
+        )
+        df_result = pd.concat([df_com, df_result[~_mask_cod]], ignore_index=True)
+    return df_result
 
 
 def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
@@ -464,6 +485,10 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
             + ", ".join(faltando)
         )
 
+    # Quando a fatura já tem coluna "Titular" (mesmo nome para titular e dependentes),
+    # o fallback para ultimo_titular_norm não se aplica — cada nome_norm já é o titular correto.
+    _usa_col_titular = bool(c["titular"] and "TITULAR" in _norm(c["titular"]).upper())
+
     titulares: dict = {}
     linhas_validas = 0
     ultimo_titular_norm: str | None = None  # fallback: dependente sem coluna "Titular" separada
@@ -502,11 +527,9 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
         nasc     = _fmt_data(row.get(c["nascimento"])    if c["nascimento"]    else "")
 
         # Determina a chave de agrupamento.
-        # Se a coluna detectada já contém o nome do titular (ex: coluna "Titular"),
-        # nome_norm já é o funcionário em todas as linhas — dependentes acumulam naturalmente.
-        # Se a coluna detectada é "Beneficiário" e o dependente tem nome diferente,
-        # ele não estará em `titulares` → usar o último titular visto como fallback.
-        if not eh_titular and nome_norm not in titulares and ultimo_titular_norm:
+        # Se a coluna é "Titular": nome_norm já é o funcionário correto em todas as linhas.
+        # Se a coluna é "Beneficiário": dependentes têm nomes próprios → fallback para último titular.
+        if not eh_titular and nome_norm not in titulares and ultimo_titular_norm and not _usa_col_titular:
             nome_key = ultimo_titular_norm
         else:
             nome_key = nome_norm
@@ -984,3 +1007,178 @@ def cruzar(df_cont: pd.DataFrame,
         })
 
     return pd.DataFrame(resultado)
+
+
+# ---------------------------------------------------------------------------
+# Mesclagem de planilha de desligados
+# ---------------------------------------------------------------------------
+
+def mesclar_desligados(
+    df_audit: pd.DataFrame,
+    df_inativos: "pd.DataFrame | None",
+    periodo: str = "",
+) -> tuple:
+    """
+    Mescla dados da planilha de contratos INATIVOS (lida com ler_contratos) em df_audit.
+
+    A planilha de inativos tem a mesma estrutura da de ativos. Fornece:
+      - Dt. Demissão (campo 'demissao' do ler_contratos)
+      - Empresa, Departamento, Contrato Adm., Dt. Admissão, Cod. Funcionário
+        (para funcionários _sem_contrato que aparecem só na fatura)
+
+    Matching principal : cod_func  +  _norm_func  (ambos devem coincidir)
+    Fallback            : _norm_func apenas  (quando cod_func ausente em algum lado)
+
+    _desligado = True APENAS se demissão ocorreu até o último dia do período auditado.
+    Dt. Demissão é sempre preenchida para visualização, mesmo para datas futuras.
+
+    Retorna (df_audit_atualizado, relatorio).
+    """
+    import calendar as _cal
+    from datetime import date as _date
+
+    if df_inativos is None or df_inativos.empty:
+        return df_audit.copy(), {}
+
+    # ── Fim do período ───────────────────────────────────────────────────────
+    fim_periodo = None
+    if periodo:
+        try:
+            partes = str(periodo).strip().split("/")
+            mes, ano = int(partes[0]), int(partes[1])
+            if ano < 100:
+                ano += 2000
+            fim_periodo = _date(ano, mes, _cal.monthrange(ano, mes)[1])
+        except Exception:
+            pass
+
+    # ── Lookup dos inativos ──────────────────────────────────────────────────
+    # Colunas esperadas (saída de ler_contratos):
+    #   cod_func, _norm_func, funcionario, empresa, departamento,
+    #   contrato_adm, admissao, demissao, tem_direito, vlr_contrato, cpf …
+    #
+    # Regra ÚNICA: matrícula + nome IDÊNTICOS (ambos obrigatórios).
+    # Nome igual com matrícula diferente = novo contrato → não preenche demissão.
+    mat_nome_map: dict = {}   # (cod_func, _norm_func) → Series  (matching estrito)
+    nome_map:     dict = {}   # _norm_func → Series               (sem_contrato apenas)
+
+    for _, irow in df_inativos.iterrows():
+        cod = str(irow.get("cod_func", "") or "").strip()
+        nn  = str(irow.get("_norm_func", "") or "").strip()
+        if cod and nn:
+            mat_nome_map[(cod, nn)] = irow
+        if nn:
+            nome_map[nn] = irow
+
+    df_out = df_audit.copy()
+    matched_norms: set = set()
+    via_nome: list = []
+
+    for idx, arow in df_out.iterrows():
+        audit_mat = str(arow.get("Cod. Funcionário", "") or "").strip()
+        audit_nn  = _norm(str(arow.get("Funcionário", "") or ""))
+
+        if not audit_nn:
+            continue
+
+        # Regra de matching:
+        # • Com matrícula em ambos os lados → exige mat+nome IDÊNTICOS (estrito)
+        # • _sem_contrato (sem matrícula no ativo) → aceita nome apenas
+        #   (não há matrícula na fatura para comparar, mas o nome deve ser exato)
+        irow_matched = None
+        if audit_mat:
+            irow_matched = mat_nome_map.get((audit_mat, audit_nn))
+        elif bool(arow.get("_sem_contrato", False)) and audit_nn in nome_map:
+            irow_matched = nome_map[audit_nn]
+
+        if irow_matched is None:
+            continue
+
+        # ── Dt. Demissão ────────────────────────────────────────────────────
+        dem_str = str(irow_matched.get("demissao", "") or "").strip()
+        if not dem_str or dem_str.lower() in ("nan", "none"):
+            dem_str = ""
+
+        # Validação: demissão deve ser POSTERIOR à admissão do contrato atual.
+        # Se dem < adm → é um contrato anterior encerrado antes desta admissão
+        # (ex: foi demitido, recontratado com mesma matrícula = novo contrato).
+        # Nesse caso: APAGAR qualquer data de demissão que tenha sido gravada antes
+        # e marcar como não-desligado — o contrato atual está ativo.
+        if dem_str:
+            adm_str = str(arow.get("Dt. Admissão", "") or "").strip()
+            if adm_str and adm_str.lower() not in ("nan", "none", ""):
+                try:
+                    dt_dem_val = pd.to_datetime(dem_str, dayfirst=True, errors="coerce")
+                    dt_adm_val = pd.to_datetime(adm_str, dayfirst=True, errors="coerce")
+                    if not pd.isna(dt_dem_val) and not pd.isna(dt_adm_val):
+                        if dt_dem_val < dt_adm_val:
+                            # Contrato anterior — limpa dados incorretos e segue
+                            df_out.at[idx, "Dt. Demissão"] = ""
+                            df_out.at[idx, "_desligado"]   = False
+                            matched_norms.add((audit_mat, audit_nn))
+                            continue
+                except Exception:
+                    pass
+
+        if dem_str:
+            df_out.at[idx, "Dt. Demissão"] = dem_str
+
+        # _desligado só ativa se demissão ≤ fim do período
+        if dem_str and fim_periodo is not None:
+            try:
+                dt_dem = pd.to_datetime(dem_str, dayfirst=True, errors="coerce")
+                eh_desligado = (not pd.isna(dt_dem)) and (dt_dem.date() <= fim_periodo)
+            except Exception:
+                eh_desligado = True
+        else:
+            eh_desligado = bool(dem_str)
+
+        df_out.at[idx, "_desligado"] = eh_desligado
+
+        # ── Campos ausentes para funcionários sem contrato ativo ─────────────
+        # Se o funcionário aparecia só na fatura (_sem_contrato), populamos os campos
+        # de empresa/departamento/admissão da planilha de inativos.
+        if bool(arow.get("_sem_contrato", False)):
+            for campo_audit, campo_inativo in [
+                ("Empresa",         "empresa"),
+                ("Departamento",    "departamento"),
+                ("Contrato Adm.",   "contrato_adm"),
+                ("Dt. Admissão",    "admissao"),
+                ("Cod. Funcionário","cod_func"),
+            ]:
+                val_inativo = str(irow_matched.get(campo_inativo, "") or "").strip()
+                if val_inativo and val_inativo.lower() not in ("nan", "none"):
+                    df_out.at[idx, campo_audit] = val_inativo
+            df_out.at[idx, "_sem_contrato"] = False
+
+        matched_norms.add((audit_mat, audit_nn))
+
+    # ── Desligados não encontrados na auditoria (matrícula+nome sem par) ────────
+    sem_match: list = []
+    sem_dt:    list = []
+    for _, irow in df_inativos.iterrows():
+        cod    = str(irow.get("cod_func", "") or "").strip()
+        nn     = str(irow.get("_norm_func", "") or "").strip()
+        nome_d = str(irow.get("funcionario", "") or "")
+        if not cod or not nn:
+            continue
+        chave = (cod, nn)
+        if chave not in matched_norms:
+            sem_match.append(nome_d)
+        elif not str(irow.get("demissao", "") or "").strip():
+            sem_dt.append(nome_d)
+
+    # ── Pendências: desligado=True sem data ─────────────────────────────────
+    pendencias: list = []
+    if "_desligado" in df_out.columns and "Dt. Demissão" in df_out.columns:
+        mask = (
+            df_out["_desligado"].astype(bool)
+            & df_out["Dt. Demissão"].astype(str).str.strip().isin(["", "nan"])
+        )
+        pendencias = df_out.loc[mask, "Funcionário"].tolist()
+
+    return df_out, {
+        "sem_match":  sem_match,
+        "sem_dt":     sem_dt,
+        "pendencias": pendencias,
+    }

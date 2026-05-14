@@ -44,9 +44,18 @@ if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:
             from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
             _df, _stats, _meta = db.carregar_auditoria(_ult["periodo"], _ult["cliente"])
         if _df is not None and not _df.empty:
-            _df = aplicar_regras(_df)
-            _aid = (_meta or {}).get("id") or _ult.get("id")
+            _aid  = (_meta or {}).get("id") or _ult.get("id")
             _arqs = db.carregar_arquivos_auditoria(_aid) if _aid else {}
+            # Aplicar correção dos inativos (desligados) se arquivo salvo
+            _desl_item = (_arqs.get("desligados") or [None])[0]
+            if _desl_item and _desl_item.get("caminho"):
+                try:
+                    from app.processamento import ler_contratos, mesclar_desligados
+                    _df_inat = ler_contratos(_desl_item["caminho"])
+                    _df, _   = mesclar_desligados(_df, _df_inat, _ult["periodo"])
+                except Exception:
+                    pass
+            _df = aplicar_regras(_df)
             st.session_state.update({
                 "df_audit":      _df,
                 "df_inc":        identificar_incluidos_mes(_df, _ult["periodo"]),
@@ -186,29 +195,9 @@ if f_nome:
 
 st.caption(f"**{len(pendentes_exibidas)}** registro(s) exibido(s)")
 
-# ── Ordem das colunas (persistida em arquivo) ─────────────────────────────────
+# ── Ordem das colunas — carrega automaticamente a última ordem salva ──────────
 if "col_order_aprov" not in st.session_state:
     st.session_state["col_order_aprov"] = _col_order_load()
-
-with st.expander("📋 Ordem das colunas"):
-    _ordem = list(st.session_state["col_order_aprov"])
-    _changed = False
-    for _i, _cn in enumerate(_ordem):
-        _ca, _cb, _cc = st.columns([8, 1, 1])
-        _ca.caption(f"{_i + 1}. {_cn}")
-        if _i > 0 and _cb.button("↑", key=f"col_up_{_i}"):
-            _ordem[_i - 1], _ordem[_i] = _ordem[_i], _ordem[_i - 1]
-            _changed = True
-        if _i < len(_ordem) - 1 and _cc.button("↓", key=f"col_dn_{_i}"):
-            _ordem[_i], _ordem[_i + 1] = _ordem[_i + 1], _ordem[_i]
-            _changed = True
-    if _changed:
-        st.session_state["col_order_aprov"] = _ordem
-        _col_order_save(_ordem)
-        st.rerun()
-    if st.button("💾 Salvar esta ordem", key="salvar_col_order"):
-        _col_order_save(st.session_state["col_order_aprov"])
-        st.success("Ordem salva!")
 
 # ── Tabela editável ───────────────────────────────────────────────────────────
 COLS_INFO = [c for c in [
@@ -218,21 +207,32 @@ COLS_INFO = [c for c in [
 ] if c in pendentes_exibidas.columns]
 
 df_tab = pendentes_exibidas[COLS_INFO].copy().reset_index(drop=True)
+
+_DATE_COLS = ["Dt. Admissão", "Dt. Demissão", "Dt. Elegibilidade"]
+for _dc in _DATE_COLS:
+    if _dc in df_tab.columns:
+        # Limpar valores texto inválidos antes de converter → NaT vira célula vazia
+        _clean = (df_tab[_dc].astype(str)
+                  .str.strip()
+                  .replace({"nan": "", "None": "", "NaT": "", "none": "", "NAT": ""}))
+        df_tab[_dc] = pd.to_datetime(_clean, dayfirst=True, errors="coerce")
+
 df_tab.insert(0, "☑", False)
 df_tab["Justificativa"] = df_tab["Funcionário"].map(lambda f: just_salvas.get(f, "") or "")
 df_tab["Sit."]          = df_tab["Funcionário"].map(lambda f: "✅" if just_salvas.get(f, "").strip() else "⏳")
 
 col_cfg = {
-    "☑":             st.column_config.CheckboxColumn("☑", width="small"),
-    "Funcionário":   st.column_config.TextColumn("Funcionário",   width="medium"),
-    "Departamento":  st.column_config.TextColumn("Departamento",  width="medium"),
-    "Contrato Adm.": st.column_config.TextColumn("Contrato Adm.", width="small"),
-    "Dt. Admissão":  st.column_config.TextColumn("Dt. Admissão",  width="small"),
-    "Dt. Demissão":  st.column_config.TextColumn("Dt. Demissão",  width="small"),
-    "Inconsistência":st.column_config.TextColumn("Inconsistência",width="large"),
-    "Ação Sugerida": st.column_config.TextColumn("Ação Sugerida", width="medium"),
-    "Justificativa": st.column_config.TextColumn("Justificativa", width="large"),
-    "Sit.":          st.column_config.TextColumn("Sit.",          width="small"),
+    "☑":                st.column_config.CheckboxColumn("☑", width="small"),
+    "Funcionário":      st.column_config.TextColumn("Funcionário",      width="medium"),
+    "Departamento":     st.column_config.TextColumn("Departamento",     width="medium"),
+    "Contrato Adm.":    st.column_config.TextColumn("Contrato Adm.",    width="small"),
+    "Dt. Admissão":     st.column_config.DateColumn("Dt. Admissão",     width="small", format="DD/MM/YYYY"),
+    "Dt. Demissão":     st.column_config.DateColumn("Dt. Demissão",     width="small", format="DD/MM/YYYY"),
+    "Dt. Elegibilidade":st.column_config.DateColumn("Dt. Elegibilidade",width="small", format="DD/MM/YYYY"),
+    "Inconsistência":   st.column_config.TextColumn("Inconsistência",   width="large"),
+    "Ação Sugerida":    st.column_config.TextColumn("Ação Sugerida",    width="medium"),
+    "Justificativa":    st.column_config.TextColumn("Justificativa",    width="large"),
+    "Sit.":             st.column_config.TextColumn("Sit.",             width="small"),
 }
 cols_bloqueadas = [c for c in df_tab.columns if c not in ("☑", "Justificativa")]
 

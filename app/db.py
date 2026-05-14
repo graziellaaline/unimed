@@ -188,7 +188,7 @@ def carregar_arquivos_auditoria(auditoria_id: int) -> dict:
     rows = cur.fetchall()
     con.close()
 
-    out = {"contratos": [], "fatura": [], "compra": []}
+    out = {"contratos": [], "fatura": [], "compra": [], "desligados": []}
     for tipo, nome_original, caminho in rows:
         if Path(caminho).exists():
             out.setdefault(tipo, []).append({

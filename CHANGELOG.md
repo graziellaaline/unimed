@@ -12,6 +12,77 @@
 
 ## Histórico
 
+### V1.9.2 — 2026-05-14
+**Aprovação: remove UI de ordem de colunas + Exclusões: correção de erro ValueError**
+- `pages/6_Aprovação.py` — removido expander "📋 Ordem das colunas" e botão "💾 Salvar esta ordem". O sistema carrega automaticamente a última ordem gravada (JSON) sem interação do usuário.
+- `pages/3_Exclusões.py` — corrigido `ValueError: truth value of a Series is ambiguous` no lookup do dict de inativos: substituído `or` entre Series por dois `get()` separados com verificação de None explícita.
+
+### V1.9.1 — 2026-05-14
+**Exclusões: upload da planilha de inativos diretamente na página**
+- `pages/3_Exclusões.py` — quando o arquivo de inativos não está salvo no banco (ou ainda há exclusões sem dados), exibe widget de upload da planilha de inativos diretamente na página. Permite enriquecer Empresa/Departamento/Contrato dos excluídos sem precisar reprocessar toda a importação.
+
+### V1.9.0 — 2026-05-14
+**Exclusões: enriquecimento de dados via planilha de inativos**
+- `pages/3_Exclusões.py` — após identificar os excluídos do período anterior, busca os dados faltantes (Empresa, Departamento, Contrato Adm., Dt. Admissão, Dt. Demissão) no arquivo de inativos salvo para o período atual. Corrige casos como ALAN GABRIEL APARECIDO DE SOUZA DA SILVA que aparecem sem informações por serem _sem_contrato no período anterior.
+
+### V1.8.9 — 2026-05-14
+**Reordenação do menu + Exclusões Indevidas: matching matrícula+nome e status "Excluído — com cobrança"**
+- Páginas renomeadas na nova ordem: 1·Importação, 2·Inclusões, 3·Exclusões, 4·Auditoria Exclusões Indevidas, 5·Auditoria, 6·Aprovação, 7·Histórico. `main.py` atualizado.
+- `pages/4_Auditoria_Exclusões_Indevidas.py` — fat_lookup agora usa chave dupla (cod_func + _norm) idêntica à regra de mesclar_desligados; valida que demissão > admissão do contrato atual antes de incluir o caso (corrige GUSTAVO). Novo status "🔶 EXCLUÍDO — COM COBRANÇA MÉDICA" quando apenas Conta médica está sendo cobrada (mensalidade = R$ 0,00).
+
+### V1.8.8 — 2026-05-14
+**Exclusões Indevidas: nova coluna "O que está sendo cobrado"**
+- `pages/6_Auditoria_Exclusões_Indevidas.py` — coluna "O que está sendo cobrado" adicionada à tabela, usando os campos `_vlr_mensalidade_fat`, `_vlr_dependente_fat` e `_vlr_copart_fat` do df_audit para mostrar "Mensalidade/Contribuição Saúde", "Dependente", "Conta médica" (ou combinações). A coluna aparece também na exportação Excel.
+
+### V1.8.7 — 2026-05-14
+**Correção: "None" nas datas + sem_contrato sem matrícula voltam a ser preenchidos**
+- `app/processamento.py` — `mesclar_desligados`: funcionários _sem_contrato (sem matrícula no ativo, ex: aparecem só na fatura) continuam sendo localizados por nome na planilha de inativos para preenchimento de empresa/dept/admissão/demissão. A regra estrita mat+nome só se aplica a quem tem matrícula no ativo.
+- `pages/5_Aprovação.py` — conversão de datas limpa explicitamente strings "None"/"nan"/"NaT" antes de `pd.to_datetime`, garantindo que células vazias apareçam em branco (não "None").
+
+### V1.8.6 — 2026-05-14
+**Correção: demissão ignorada quando data é anterior à admissão do contrato atual + remoção do CPF**
+- `app/processamento.py` — `mesclar_desligados`: após encontrar par matrícula+nome, valida que a data de demissão é POSTERIOR à data de admissão do contrato ativo. Se a demissão for anterior, ignora (é contrato anterior encerrado — pessoa foi recontratada). Corrige casos como GUSTAVO FERREIRA MARTINS.
+- `app/processamento.py` — remove completamente o campo CPF: não é lido de contratos, não é propagado no cruzamento, não é usado em nenhum matching. Matching é exclusivamente por matrícula+nome.
+
+### V1.8.5 — 2026-05-14
+**Regra de desligamento: vínculo exige matrícula+nome idênticos (sem fallback por nome)**
+- `app/processamento.py` — `mesclar_desligados` remove o fallback por nome. A data de demissão só é preenchida quando matrícula E nome forem exatamente iguais nas duas planilhas. Nome igual com matrícula diferente = novo contrato, não preenche demissão. Relatório remove "via_nome" (não há mais vínculos por nome apenas).
+- `pages/1_Importação.py` — `_mostrar_relatorio_desligados` atualizada para refletir nova semântica do relatório.
+
+### V1.8.4 — 2026-05-14
+**Aba Inclusões: recalculo imediato + critério duplo (Data Inclusão + novos vs período anterior)**
+- `pages/3_Inclusões.py` — auto-carrega auditoria do banco (não dependia de sessão prévia); sempre recalcula a partir do df_audit atual (elimina stale de sessão). Dois critérios combinados: (1) titulares cuja "Data Inclusão" da fatura coincide com o mês/ano da auditoria; (2) titulares presentes na fatura atual que não estavam na fatura do período anterior — cobre inclusões retroativas. Coluna "Origem" explica de qual critério o registro veio. KPIs separados por critério.
+
+### V1.8.3 — 2026-05-14
+**Correção: desligados lidos com ler_contratos + preenchimento completo de campos ausentes**
+- `app/processamento.py` — `mesclar_desligados` reescrita para aceitar a saída de `ler_contratos` (planilha de inativos com mesma estrutura da de ativos). Além de Dt. Demissão e _desligado, preenche Empresa, Departamento, Contrato Adm., Dt. Admissão e Cod. Funcionário para funcionários que apareciam só na fatura (_sem_contrato=True). Matching por cod_func+_norm_func (principal) e _norm_func apenas (fallback).
+- `pages/1_Importação.py` — usa `ler_contratos` (não mais `ler_desligados`) para ler a planilha de inativos, garantindo que a coluna Dt. Demissão seja lida com a mesma lógica de parsing dos contratos ativos.
+- `pages/6_Auditoria_Exclusões_Indevidas.py` — detecta automaticamente se df_desligados está em formato df_cont ou legado; mescla com mesclar_desligados usando o formato correto.
+
+### V1.8.2 — 2026-05-14
+**Correção: critério de matching de desligados alterado para Matrícula+Nome**
+- `app/processamento.py` — `mesclar_desligados` usa agora **matrícula + nome** (ambos devem coincidir) como critério principal de vínculo entre a planilha de desligados e a base de contratos. Fallback para nome-apenas quando matrícula não está disponível em algum dos lados. Remove matching isolado por CPF ou matrícula que causava falsos positivos.
+
+### V1.8.1 — 2026-05-14
+**Correções pós-V1.8.0: datas futuras, "None" e mesclagem retroativa**
+- `app/processamento.py` — `mesclar_desligados` recebe `periodo` e só marca `_desligado=True` quando a demissão ocorreu até o último dia do mês auditado; demissões futuras preenchem `Dt. Demissão` para visualização mas não geram alerta.
+- `pages/5_Aprovação.py` — colunas de data mantidas como `pd.Timestamp` (sem `.dt.date`) para que células vazias apareçam em branco em vez de "None".
+- `pages/6_Auditoria_Exclusões_Indevidas.py` — ao carregar a planilha de desligados (por upload manual, sessão ou banco), o sistema chama `mesclar_desligados` no `df_audit` da sessão e atualiza as regras; garante que `Dt. Demissão` apareça imediatamente nas abas Auditoria, Aprovação e Exclusões sem reprocessamento completo.
+
+### V1.8.0 — 2026-05-14
+**Novo: upload centralizado da planilha de desligados na Importação**
+- `pages/1_Importação.py` — quarto uploader "🚫 Funcionários Desligados" (opcional). Ao processar, a planilha é mesclada com a auditoria antes das regras, atualizando `Dt. Demissão` e `_desligado` de cada funcionário. Relatório de inconsistências exibido após a importação (não encontrados, vínculos por nome, sem data, pendências).
+- `app/processamento.py` — novo helper `_limpar_cpf()`, CPF lido opcionalmente da planilha de contratos e propagado no cruzamento; nova função `mesclar_desligados(df_audit, df_desl)` que faz o vínculo por CPF → matrícula (Cod. Funcionário) → nome normalizado e retorna relatório de inconsistências.
+- `app/db.py` — `carregar_arquivos_auditoria` inicializa chave `"desligados"` no dict de retorno.
+- `pages/6_Auditoria_Exclusões_Indevidas.py` — auto-carrega desligados da sessão (importados em 1 · Importação) ou do arquivo salvo no banco; upload manual continua disponível como substituição. Todas as abas (2, 3, 5, 6) usam `Dt. Demissão` já consolidada sem novo upload.
+- CPF é campo interno de matching — não exibido em nenhuma tabela ou exportação.
+
+### V1.7.3 — 2026-05-14
+**Correção: falsa coparticipação atribuída ao titular anterior + duplicata no contratos + datas na Aprovação**
+- `app/processamento.py` — `ler_fatura_csv`: quando a coluna detectada é "Titular" (nome igual em todas as linhas da família), não faz mais fallback para o último titular visto. Corrige caso onde coparticipação de um funcionário (MAURICIO ALEXANDRE CRUZ) era somada incorretamente ao titular anterior (MATHEWS OLIVEIRA MOTA).
+- `app/processamento.py` — `ler_contratos`: remove cadastro duplicado do mesmo funcionário (mesmo cod_func + mesmo nome normalizado), mantendo apenas a primeira ocorrência. Corrige alerta falso "Tem direito mas não consta na fatura" para funcionários com linha duplicada na planilha (ex: DIESSICA PEREIRA DE SOUZA).
+- `pages/5_Aprovação.py` — colunas `Dt. Admissão`, `Dt. Demissão` e `Dt. Elegibilidade` convertidas de string para `datetime.date` e configuradas como `DateColumn` no data_editor, permitindo ordenação correta por data.
+
 ### V1.6.0 — 2026-05-12
 **Nova página: 3 · Exclusões do Mês**
 - `pages/3_Exclusões.py` — compara os titulares na fatura do período atual com os de um período anterior selecionável. Lista quem saiu do plano (estava antes, não está agora). Inclui KPIs (titulares antes × depois × exclusões), filtros por empresa/departamento/contrato e tabela com dados do período anterior.

@@ -18,11 +18,12 @@ Use o menu lateral para navegar:
 | Página | Função |
 |--------|--------|
 | **1 · Importação** | Carregue os arquivos e processe a auditoria |
-| **2 · Auditoria** | Tabela completa com filtros, KPIs e exportação |
-| **3 · Exclusões do Mês** | Quem saiu da fatura comparado ao mês anterior |
-| **3 · Inclusões do Mês** | Relatório de novos beneficiários no período |
-| **4 · Histórico** | Consulte e recarregue auditorias anteriores |
-| **5 · Aprovação** | Justifique pendências e aprove o fechamento |
+| **2 · Inclusões** | Novos beneficiários incluídos no período |
+| **3 · Exclusões** | Quem saiu da fatura vs mês anterior |
+| **4 · Auditoria Exclusões Indevidas** | Desligados ainda cobrados — prejuízo estimado |
+| **5 · Auditoria** | Tabela completa com filtros, KPIs e exportação |
+| **6 · Aprovação** | Justifique pendências e aprove o fechamento |
+| **7 · Histórico** | Consulte e recarregue auditorias anteriores |
 """)
 
 if "df_audit" in st.session_state and st.session_state["df_audit"] is not None:

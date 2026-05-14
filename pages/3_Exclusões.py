@@ -75,8 +75,101 @@ if fat_ant.empty:
 
 nomes_atuais = {_norm_nome(f) for f in fat_atual["Funcionário"].dropna()}
 
-mask     = fat_ant["Funcionário"].apply(lambda f: _norm_nome(f) not in nomes_atuais)
-df_exc   = fat_ant[mask].copy()
+mask   = fat_ant["Funcionário"].apply(lambda f: _norm_nome(f) not in nomes_atuais)
+df_exc = fat_ant[mask].copy()
+
+# ── Enriquecer excluídos com dados dos inativos (para sem_contrato) ───────────
+# Funcionários que aparecem só na fatura (_sem_contrato) têm empresa/dept vazios.
+# Fonte 1: arquivo de inativos salvo no banco.
+# Fonte 2: upload manual na própria página.
+
+from app.processamento import ler_contratos as _ler_cont
+
+_df_inat = pd.DataFrame()
+
+# Fonte 1: arquivo salvo
+_aid_atual  = st.session_state.get("auditoria_id")
+_arqs_atual = db.carregar_arquivos_auditoria(_aid_atual) if _aid_atual else {}
+_desl_item  = (_arqs_atual.get("desligados") or [None])[0]
+if _desl_item and _desl_item.get("caminho"):
+    try:
+        _df_inat = _ler_cont(_desl_item["caminho"])
+    except Exception:
+        pass
+
+# Fonte 2: upload manual (quando não há arquivo salvo ou para override)
+_sem_dados = df_exc[
+    df_exc["Empresa"].astype(str).str.strip().isin(["", "nan", "None"])
+].shape[0] if not df_exc.empty else 0
+
+if _df_inat.empty or _sem_dados > 0:
+    with st.expander(
+        "📂 Planilha de inativos não encontrada — faça upload para preencher os dados ausentes"
+        if _df_inat.empty
+        else f"📂 {_sem_dados} exclusão(ões) sem dados — carregue a planilha de inativos para enriquecer",
+        expanded=_df_inat.empty,
+    ):
+        st.caption(
+            "Funcionários que aparecem apenas na fatura (sem linha nos contratos ativos) "
+            "precisam da planilha de inativos para mostrar empresa, departamento e contrato."
+        )
+        _arq_inat_up = st.file_uploader(
+            "Planilha de funcionários inativos (mesma estrutura dos contratos ativos)",
+            type=["xlsx", "xls", "csv"],
+            key="up_inat_exc",
+        )
+        if _arq_inat_up:
+            import tempfile, os
+            _arq_inat_up.seek(0)
+            _suf = Path(_arq_inat_up.name).suffix
+            _tmp = tempfile.NamedTemporaryFile(delete=False, suffix=_suf)
+            _tmp.write(_arq_inat_up.read())
+            _tmp.close()
+            try:
+                _df_inat = _ler_cont(_tmp.name)
+                st.success(f"✅ {len(_df_inat)} registro(s) carregado(s) da planilha de inativos.")
+            except Exception as _e:
+                st.error(f"Erro ao ler planilha: {_e}")
+            finally:
+                try:
+                    os.unlink(_tmp.name)
+                except Exception:
+                    pass
+
+# Aplicar enriquecimento
+if not _df_inat.empty and not df_exc.empty:
+    _inat_mat  = {}
+    _inat_nome = {}
+    for _, _ir in _df_inat.iterrows():
+        _cod_i = str(_ir.get("cod_func", "") or "").strip()
+        _nn_i  = str(_ir.get("_norm_func", "") or "").strip()
+        if _cod_i and _nn_i:
+            _inat_mat[(_cod_i, _nn_i)] = _ir
+        if _nn_i:
+            _inat_nome[_nn_i] = _ir
+
+    _campos = [
+        ("Empresa",        "empresa"),
+        ("Departamento",   "departamento"),
+        ("Contrato Adm.",  "contrato_adm"),
+        ("Dt. Admissão",   "admissao"),
+        ("Dt. Demissão",   "demissao"),
+    ]
+    for _idx, _row in df_exc.iterrows():
+        _cod = str(_row.get("Cod. Funcionário", "") or "").strip()
+        _nn  = _norm_nome(_row.get("Funcionário", ""))
+        # Usar get com chave composta; se não achar, tentar só por nome
+        _irow = _inat_mat.get((_cod, _nn))
+        if _irow is None:
+            _irow = _inat_nome.get(_nn)
+        if _irow is None:
+            continue
+        for _ca, _ci in _campos:
+            if _ca in df_exc.columns:
+                _val = str(_irow.get(_ci, "") or "").strip()
+                _cur = str(_row.get(_ca, "") or "").strip()
+                if _val and _val.lower() not in ("nan", "none") and not _cur:
+                    df_exc.at[_idx, _ca] = _val
 
 # ── Resumo ────────────────────────────────────────────────────────────────────
 st.divider()
