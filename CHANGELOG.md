@@ -12,6 +12,9 @@
 
 ## Histórico
 
+### V1.12.0 — 2026-06-18
+- Novo: tela **8 · Análises**, painel dedicado de gráficos para análise gerencial — custos por Departamento/Empresa, desvios por Departamento/Contrato Adm., inconsistências por Departamento/Tipo/Empresa/Contrato Adm., e evolução de Total Fatura x Total Compra e quantidade de inconsistências entre períodos já processados.
+
 ### V1.11.1 — 2026-06-18
 - Novo: na aba Aprovação, a coluna "Sit." agora é uma caixa de marcação editável — desmarcar um item justificado o reverte para Pendente (remove a justificativa salva no banco), sem precisar apagar o texto manualmente.
 
