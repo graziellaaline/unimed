@@ -12,6 +12,10 @@
 
 ## Histórico
 
+### V1.14.0 — 2026-06-18
+- Mudança: todos os gráficos de barra/linha da aba **8 · Análises** agora usam Altair em vez do gráfico nativo simples do Streamlit, com o **valor escrito em cada barra/ponto** — antes só dava para ver a altura da barra, sem o número.
+- Correção: gráficos de Custo/Desvio/Inconsistência por Departamento e Contrato Adm. limitam a exibição aos 15 maiores (esses grupos têm 50+ categorias; com todas juntas as barras ficavam finas demais e pareciam vazias) — o restante continua disponível na tabela de detalhe.
+
 ### V1.13.0 — 2026-06-18
 - Mudança: gráficos de Custo e Desvio removidos da aba **5 · Auditoria** (que fica só com filtros + tabela) e centralizados na aba **8 · Análises**.
 - Novo: gráfico de Custo também por Contrato Adm. (além de Departamento e Empresa).

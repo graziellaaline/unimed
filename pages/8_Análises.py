@@ -2,6 +2,7 @@
 import sys
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -58,6 +59,43 @@ def _brl(v):
         return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "—"
+
+
+def _num(v):
+    try:
+        return f"{float(v):,.0f}".replace(",", ".")
+    except Exception:
+        return "—"
+
+
+def _chart_barras(d: pd.DataFrame, grupo: str, cols_valor: list, moeda: bool = False, top: int = 15):
+    """Gráfico de barras horizontais com o valor escrito em cada barra (Altair)."""
+    if d is None or d.empty:
+        return None
+    d = d.head(top).copy()
+    ordem = d[grupo].astype(str).tolist()
+    fmt = _brl if moeda else _num
+    dl = d.melt(id_vars=[grupo], value_vars=cols_valor, var_name="Série", value_name="Valor")
+    dl["Rótulo"] = dl["Valor"].apply(fmt)
+    multi = len(cols_valor) > 1
+    altura = max(260, 30 * len(d) * (len(cols_valor) if multi else 1))
+
+    base = alt.Chart(dl).encode(
+        y=alt.Y(f"{grupo}:N", sort=ordem, title=None),
+        x=alt.X("Valor:Q", title=None),
+    )
+    if multi:
+        base = base.encode(
+            color=alt.Color("Série:N", title=None),
+            yOffset=alt.YOffset("Série:N"),
+        )
+        bars = base.mark_bar()
+    else:
+        bars = base.mark_bar(color="#1565c0")
+
+    text = base.mark_text(align="left", dx=3, fontSize=10, color="#333").encode(text="Rótulo:N")
+
+    return (bars + text).properties(height=altura)
 
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────
@@ -168,10 +206,14 @@ for col, grupo, titulo in [
     with col:
         st.markdown(f"**{titulo}**")
         g = _gastos_por(grupo)
-        if g.empty:
+        cols_valor = [c for c in ["Valor Fatura", "Valor Compra Total", "Valor Contrato"] if c in g.columns]
+        chart = _chart_barras(g, grupo, cols_valor, moeda=True)
+        if chart is None:
             st.caption(f"Sem dados de {grupo.lower()} para exibir.")
         else:
-            st.bar_chart(g.set_index(grupo), use_container_width=True)
+            st.altair_chart(chart, width="stretch")
+            if len(g) > 15:
+                st.caption(f"Mostrando os 15 maiores de {len(g)}.")
 
 st.divider()
 
@@ -189,17 +231,23 @@ d1, d2 = st.columns(2)
 with d1:
     st.markdown("**Por Departamento**")
     d = _desvios_por("Departamento")
-    if d.empty:
+    chart = _chart_barras(d, "Departamento", ["Dif. Contrato x Compra", "Dif. Fatura x Compra"], moeda=True)
+    if chart is None:
         st.caption("Sem desvios por departamento para exibir.")
     else:
-        st.bar_chart(d.set_index("Departamento"), use_container_width=True)
+        st.altair_chart(chart, width="stretch")
+        if len(d) > 15:
+            st.caption(f"Mostrando os 15 maiores de {len(d)}.")
 with d2:
     st.markdown("**Por Contrato Adm.**")
     d = _desvios_por("Contrato Adm.")
-    if d.empty:
+    chart = _chart_barras(d, "Contrato Adm.", ["Dif. Contrato x Compra", "Dif. Fatura x Compra"], moeda=True)
+    if chart is None:
         st.caption("Sem desvios por Contrato Adm. para exibir.")
     else:
-        st.bar_chart(d.set_index("Contrato Adm."), use_container_width=True)
+        st.altair_chart(chart, width="stretch")
+        if len(d) > 15:
+            st.caption(f"Mostrando os 15 maiores de {len(d)}.")
 
 st.markdown("**🔎 Detalhe — registros com maior desvio**")
 _cols_det = [c for c in [
@@ -222,7 +270,7 @@ else:
                 "Dif. Contrato x Compra", "Dif. Fatura x Compra"]:
         if col in df_det_show.columns:
             df_det_show[col] = df_det_show[col].apply(lambda v: _brl(v) if pd.notna(v) else "—")
-    st.dataframe(df_det_show, use_container_width=True, hide_index=True, height=420)
+    st.dataframe(df_det_show, width="stretch", hide_index=True, height=420)
     st.caption(f"Mostrando os {len(df_det_show)} maiores desvios de {len(df_det)} registro(s) divergente(s) no total.")
 
 st.divider()
@@ -233,33 +281,43 @@ i1, i2 = st.columns(2)
 with i1:
     st.markdown("**Por Departamento**")
     i = _inconsistencias_por("Departamento")
-    if i.empty:
+    chart = _chart_barras(i, "Departamento", ["Qtd. Inconsistências"])
+    if chart is None:
         st.caption("Sem inconsistências por departamento para exibir.")
     else:
-        st.bar_chart(i.set_index("Departamento"), use_container_width=True)
+        st.altair_chart(chart, width="stretch")
+        if len(i) > 15:
+            st.caption(f"Mostrando os 15 maiores de {len(i)}.")
 with i2:
     st.markdown("**Por Tipo**")
     i = _inconsistencias_por_tipo()
-    if i.empty:
+    chart = _chart_barras(i, "Tipo", ["Qtd."])
+    if chart is None:
         st.caption("Sem inconsistências para exibir.")
     else:
-        st.bar_chart(i.set_index("Tipo"), use_container_width=True)
+        st.altair_chart(chart, width="stretch")
 
 i3, i4 = st.columns(2)
 with i3:
     st.markdown("**Por Empresa**")
     i = _inconsistencias_por("Empresa")
-    if i.empty:
+    chart = _chart_barras(i, "Empresa", ["Qtd. Inconsistências"])
+    if chart is None:
         st.caption("Sem inconsistências por empresa para exibir.")
     else:
-        st.bar_chart(i.set_index("Empresa"), use_container_width=True)
+        st.altair_chart(chart, width="stretch")
+        if len(i) > 15:
+            st.caption(f"Mostrando os 15 maiores de {len(i)}.")
 with i4:
     st.markdown("**Por Contrato Adm.**")
     i = _inconsistencias_por("Contrato Adm.")
-    if i.empty:
+    chart = _chart_barras(i, "Contrato Adm.", ["Qtd. Inconsistências"])
+    if chart is None:
         st.caption("Sem inconsistências por Contrato Adm. para exibir.")
     else:
-        st.bar_chart(i.set_index("Contrato Adm."), use_container_width=True)
+        st.altair_chart(chart, width="stretch")
+        if len(i) > 15:
+            st.caption(f"Mostrando os 15 maiores de {len(i)}.")
 
 st.divider()
 
@@ -293,12 +351,26 @@ else:
             .sort_values("_ord")
             .drop(columns="_ord")
         )
+        def _linha_com_valores(d: pd.DataFrame, cols_valor: list, moeda: bool = False):
+            fmt = _brl if moeda else _num
+            dl = d.melt(id_vars=["Período"], value_vars=cols_valor, var_name="Série", value_name="Valor")
+            dl["Rótulo"] = dl["Valor"].apply(fmt)
+            base = alt.Chart(dl).encode(
+                x=alt.X("Período:N", sort=d["Período"].tolist(), title=None),
+                y=alt.Y("Valor:Q", title=None),
+                color=alt.Color("Série:N", title=None) if len(cols_valor) > 1 else alt.value("#1565c0"),
+            )
+            linhas = base.mark_line(point=True)
+            texto = base.mark_text(align="center", dy=-10, fontSize=10, color="#333").encode(text="Rótulo:N")
+            return (linhas + texto).properties(height=300)
+
         e1, e2 = st.columns(2)
         with e1:
             st.markdown("**Total Fatura x Total Compra**")
-            st.line_chart(df_hist.set_index("Período")[["Total Fatura", "Total Compra"]], use_container_width=True)
+            st.altair_chart(_linha_com_valores(df_hist, ["Total Fatura", "Total Compra"], moeda=True),
+                             width="stretch")
         with e2:
             st.markdown("**Qtd. de Inconsistências**")
-            st.line_chart(df_hist.set_index("Período")[["Inconsistentes"]], use_container_width=True)
+            st.altair_chart(_linha_com_valores(df_hist, ["Inconsistentes"]), width="stretch")
     else:
         st.caption("Não foi possível montar o histórico.")
