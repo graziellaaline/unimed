@@ -17,6 +17,11 @@ __pycache__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Logs
+logs/
+stderr.log
+stdout.log
+
 # OS
 .DS_Store
 Thumbs.db
