@@ -5,6 +5,9 @@ venv/
 dados/historico.db
 dados/
 
+# Backups locais do banco/configurações
+backups/
+
 # Uploads temporários
 uploads/
 
