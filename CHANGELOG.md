@@ -12,6 +12,13 @@
 
 ## Histórico
 
+### V1.13.0 — 2026-06-18
+- Mudança: gráficos de Custo e Desvio removidos da aba **5 · Auditoria** (que fica só com filtros + tabela) e centralizados na aba **8 · Análises**.
+- Novo: gráfico de Custo também por Contrato Adm. (além de Departamento e Empresa).
+- Novo: cards de total de desvio (Contrato x Compra / Fatura x Compra) e tabela de detalhe com os registros individuais de maior desvio — para localizar rapidamente a origem de uma diferença, sem precisar pedir análise manual.
+- Correção de robustez: página recalcula `Tipo Inconsistência`/colunas de desvio automaticamente se a auditoria em sessão tiver sido carregada por código antigo, e normaliza valores de Status/Departamento/Empresa antes de agrupar — evita gráficos aparecerem vazios por sessão desatualizada.
+- Correção: gráfico "Evolução entre períodos" agora ordena por data real (mês/ano) em vez de ordem alfabética do texto do período.
+
 ### V1.12.0 — 2026-06-18
 - Novo: tela **8 · Análises**, painel dedicado de gráficos para análise gerencial — custos por Departamento/Empresa, desvios por Departamento/Contrato Adm., inconsistências por Departamento/Tipo/Empresa/Contrato Adm., e evolução de Total Fatura x Total Compra e quantidade de inconsistências entre períodos já processados.
 

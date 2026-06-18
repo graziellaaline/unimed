@@ -82,8 +82,6 @@ k8.metric("Total Compra",      _brl(stats.get("total_compra", 0)))
 
 st.divider()
 
-graficos_container = st.container()
-
 # ── Filtros ───────────────────────────────────────────────────────────────────
 with st.expander("🔍 Filtros", expanded=True):
     f1, f2, f3, f4 = st.columns(4)
@@ -145,95 +143,7 @@ if f_tipo_inc and "Tipo Inconsistência" in df_f.columns:
     )]
 
 st.caption(f"**{len(df_f)}** registro(s) exibido(s)")
-
-# ── Gráficos ────────────────────────────────────────────────────────────────
-def _base_gastos(df_base, grupo):
-    if grupo not in df_base.columns:
-        return pd.DataFrame()
-
-    cols_valor = [c for c in ["Valor Fatura", "Valor Compra Total", "Valor Contrato"] if c in df_base.columns]
-    if not cols_valor:
-        return pd.DataFrame()
-
-    df_grp = df_base.copy()
-    df_grp[grupo] = df_grp[grupo].fillna("").astype(str).str.strip()
-    df_grp = df_grp[df_grp[grupo] != ""]
-    if df_grp.empty:
-        return pd.DataFrame()
-
-    return (
-        df_grp.groupby(grupo, as_index=False)[cols_valor]
-        .sum()
-        .sort_values("Valor Fatura" if "Valor Fatura" in cols_valor else cols_valor[0], ascending=False)
-    )
-
-
-def _base_desvios(df_base, grupo):
-    if grupo not in df_base.columns:
-        return pd.DataFrame()
-
-    cols_desvio = [c for c in ["Dif. Contrato x Compra", "Dif. Fatura x Compra"] if c in df_base.columns]
-    if not cols_desvio:
-        return pd.DataFrame()
-
-    df_grp = df_base.copy()
-    df_grp[grupo] = df_grp[grupo].fillna("").astype(str).str.strip()
-    df_grp = df_grp[df_grp[grupo] != ""]
-    if df_grp.empty:
-        return pd.DataFrame()
-
-    for col in cols_desvio:
-        if col in df_grp.columns:
-            df_grp[col] = pd.to_numeric(df_grp[col], errors="coerce").fillna(0).abs()
-
-    return (
-        df_grp.groupby(grupo, as_index=False)[cols_desvio]
-        .sum()
-        .sort_values(cols_desvio[0], ascending=False)
-    )
-
-
-with graficos_container:
-    st.markdown("### Gráficos de Gastos")
-    g1, g2 = st.columns(2)
-
-    with g1:
-        st.markdown("**Por Departamento**")
-        gastos_dep = _base_gastos(df_f, "Departamento")
-        if gastos_dep.empty:
-            st.caption("Sem dados de departamento para exibir.")
-        else:
-            st.bar_chart(gastos_dep.set_index("Departamento"), use_container_width=True)
-
-    with g2:
-        st.markdown("**Por Contrato Adm.**")
-        gastos_contrato = _base_gastos(df_f, "Contrato Adm.")
-        if gastos_contrato.empty:
-            st.caption("Sem dados de Contrato Adm. para exibir.")
-        else:
-            st.bar_chart(gastos_contrato.set_index("Contrato Adm."), use_container_width=True)
-
-    st.divider()
-    st.markdown("### Gráficos de Desvio")
-    d1, d2 = st.columns(2)
-
-    with d1:
-        st.markdown("**Desvio por Departamento**")
-        desvios_dep = _base_desvios(df_f, "Departamento")
-        if desvios_dep.empty:
-            st.caption("Sem desvios por departamento para exibir.")
-        else:
-            st.bar_chart(desvios_dep.set_index("Departamento"), use_container_width=True)
-
-    with d2:
-        st.markdown("**Desvio por Contrato Adm.**")
-        desvios_contrato = _base_desvios(df_f, "Contrato Adm.")
-        if desvios_contrato.empty:
-            st.caption("Sem desvios por Contrato Adm. para exibir.")
-        else:
-            st.bar_chart(desvios_contrato.set_index("Contrato Adm."), use_container_width=True)
-
-    st.divider()
+st.caption("📊 Gráficos de custo/desvio/inconsistência foram movidos para a aba **8 · Análises**.")
 
 # ── Tabela ────────────────────────────────────────────────────────────────────
 COLS_EX = [

@@ -39,9 +39,16 @@ if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:
         st.stop()
 
 df      = st.session_state["df_audit"].copy()
-stats   = st.session_state.get("stats", {})
 periodo = st.session_state.get("periodo", "")
 cliente = st.session_state.get("cliente", "")
+
+# Garante colunas derivadas (Status, Inconsistência, Tipo Inconsistência, Dif. …)
+# mesmo que o df em sessão tenha sido carregado por uma versão antiga do código.
+if "Tipo Inconsistência" not in df.columns or "Dif. Fatura x Compra" not in df.columns:
+    df = aplicar_regras(df)
+    st.session_state["df_audit"] = df
+
+stats = calcular_stats(df)
 
 st.subheader(f"Período: {periodo}" + (f" · {cliente}" if cliente else ""))
 
@@ -65,6 +72,10 @@ st.divider()
 
 
 # ── Helpers de agregação ──────────────────────────────────────────────────────
+def _col_normalizada(grupo: str) -> pd.Series:
+    return df[grupo].fillna("").astype(str).str.strip()
+
+
 def _gastos_por(grupo: str) -> pd.DataFrame:
     if grupo not in df.columns:
         return pd.DataFrame()
@@ -72,10 +83,12 @@ def _gastos_por(grupo: str) -> pd.DataFrame:
     if not cols_valor:
         return pd.DataFrame()
     d = df.copy()
-    d[grupo] = d[grupo].fillna("").astype(str).str.strip()
+    d[grupo] = _col_normalizada(grupo)
     d = d[d[grupo] != ""]
     if d.empty:
         return pd.DataFrame()
+    for col in cols_valor:
+        d[col] = pd.to_numeric(d[col], errors="coerce").fillna(0)
     return (
         d.groupby(grupo, as_index=False)[cols_valor].sum()
         .sort_values(cols_valor[0], ascending=False)
@@ -89,22 +102,29 @@ def _desvios_por(grupo: str) -> pd.DataFrame:
     if not cols_desvio:
         return pd.DataFrame()
     d = df.copy()
-    d[grupo] = d[grupo].fillna("").astype(str).str.strip()
+    d[grupo] = _col_normalizada(grupo)
     d = d[d[grupo] != ""]
     if d.empty:
         return pd.DataFrame()
     for col in cols_desvio:
         d[col] = pd.to_numeric(d[col], errors="coerce").fillna(0).abs()
+    d = d[(d[cols_desvio].sum(axis=1)) > 0]
+    if d.empty:
+        return pd.DataFrame()
     return (
         d.groupby(grupo, as_index=False)[cols_desvio].sum()
         .sort_values(cols_desvio[0], ascending=False)
     )
 
 
+def _status_norm() -> pd.Series:
+    return df.get("Status", pd.Series(dtype=str)).fillna("").astype(str).str.strip()
+
+
 def _inconsistencias_por(grupo: str) -> pd.DataFrame:
-    if grupo not in df.columns or "Status" not in df.columns:
+    if grupo not in df.columns:
         return pd.DataFrame()
-    d = df[df["Status"] == "Inconsistente"].copy()
+    d = df[_status_norm() == "Inconsistente"].copy()
     if d.empty:
         return pd.DataFrame()
     d[grupo] = d[grupo].fillna("").astype(str).str.strip()
@@ -139,26 +159,32 @@ def _inconsistencias_por_tipo() -> pd.DataFrame:
 
 # ── Custos ───────────────────────────────────────────────────────────────────
 st.markdown("### 💰 Custos")
-c1, c2 = st.columns(2)
-with c1:
-    st.markdown("**Por Departamento**")
-    g = _gastos_por("Departamento")
-    if g.empty:
-        st.caption("Sem dados de departamento para exibir.")
-    else:
-        st.bar_chart(g.set_index("Departamento"), use_container_width=True)
-with c2:
-    st.markdown("**Por Empresa**")
-    g = _gastos_por("Empresa")
-    if g.empty:
-        st.caption("Sem dados de empresa para exibir.")
-    else:
-        st.bar_chart(g.set_index("Empresa"), use_container_width=True)
+c1, c2, c3 = st.columns(3)
+for col, grupo, titulo in [
+    (c1, "Departamento", "Por Departamento"),
+    (c2, "Empresa", "Por Empresa"),
+    (c3, "Contrato Adm.", "Por Contrato Adm."),
+]:
+    with col:
+        st.markdown(f"**{titulo}**")
+        g = _gastos_por(grupo)
+        if g.empty:
+            st.caption(f"Sem dados de {grupo.lower()} para exibir.")
+        else:
+            st.bar_chart(g.set_index(grupo), use_container_width=True)
 
 st.divider()
 
 # ── Desvios ──────────────────────────────────────────────────────────────────
 st.markdown("### 📉 Desvios (Contrato x Compra / Fatura x Compra)")
+
+_dif_cont = pd.to_numeric(df.get("Dif. Contrato x Compra", 0), errors="coerce").fillna(0)
+_dif_fat  = pd.to_numeric(df.get("Dif. Fatura x Compra", 0), errors="coerce").fillna(0)
+m1, m2, m3 = st.columns(3)
+m1.metric("Desvio Contrato x Compra", _brl(_dif_cont.sum()))
+m2.metric("Desvio Fatura x Compra", _brl(_dif_fat.sum()))
+m3.metric("Registros com desvio", int(((_dif_cont.abs() > 0.01) | (_dif_fat.abs() > 0.01)).sum()))
+
 d1, d2 = st.columns(2)
 with d1:
     st.markdown("**Por Departamento**")
@@ -174,6 +200,30 @@ with d2:
         st.caption("Sem desvios por Contrato Adm. para exibir.")
     else:
         st.bar_chart(d.set_index("Contrato Adm."), use_container_width=True)
+
+st.markdown("**🔎 Detalhe — registros com maior desvio**")
+_cols_det = [c for c in [
+    "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
+    "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
+    "Dif. Contrato x Compra", "Dif. Fatura x Compra", "Inconsistência",
+] if c in df.columns]
+df_det = df[_cols_det].copy() if _cols_det else pd.DataFrame()
+if not df_det.empty:
+    df_det["_total_desvio"] = (
+        pd.to_numeric(df_det.get("Dif. Contrato x Compra", 0), errors="coerce").fillna(0).abs()
+        + pd.to_numeric(df_det.get("Dif. Fatura x Compra", 0), errors="coerce").fillna(0).abs()
+    )
+    df_det = df_det[df_det["_total_desvio"] > 0.01].sort_values("_total_desvio", ascending=False)
+if df_det.empty:
+    st.caption("Nenhum registro com desvio de valor neste período. 🎉")
+else:
+    df_det_show = df_det.drop(columns=["_total_desvio"]).head(20).copy()
+    for col in ["Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
+                "Dif. Contrato x Compra", "Dif. Fatura x Compra"]:
+        if col in df_det_show.columns:
+            df_det_show[col] = df_det_show[col].apply(lambda v: _brl(v) if pd.notna(v) else "—")
+    st.dataframe(df_det_show, use_container_width=True, hide_index=True, height=420)
+    st.caption(f"Mostrando os {len(df_det_show)} maiores desvios de {len(df_det)} registro(s) divergente(s) no total.")
 
 st.divider()
 
@@ -215,9 +265,13 @@ st.divider()
 
 # ── Evolução histórica entre períodos ─────────────────────────────────────────
 st.markdown("### 📈 Evolução entre períodos")
-_periodos_hist = db.listar_periodos(cliente)
+_periodos_hist = db.listar_periodos(cliente) if cliente else db.listar_periodos()
 if len(_periodos_hist) <= 1:
-    st.caption("Ainda não há outros períodos processados para comparar.")
+    st.caption(
+        f"Ainda não há outros períodos processados para comparar "
+        f"(encontrado apenas: {', '.join(p['periodo'] for p in _periodos_hist)})."
+        if _periodos_hist else "Nenhum período encontrado."
+    )
 else:
     linhas = []
     for p in _periodos_hist:
@@ -226,13 +280,19 @@ else:
             continue
         _df_p = aplicar_regras(_df_p)
         linhas.append({
-            "Período":      p["periodo"],
-            "Total Fatura":  _df_p["Valor Fatura"].sum() if "Valor Fatura" in _df_p.columns else 0,
-            "Total Compra":  _df_p["Valor Compra Total"].sum() if "Valor Compra Total" in _df_p.columns else 0,
-            "Inconsistentes": int((_df_p["Status"] == "Inconsistente").sum()) if "Status" in _df_p.columns else 0,
+            "Período":        p["periodo"],
+            "Total Fatura":   pd.to_numeric(_df_p.get("Valor Fatura", 0), errors="coerce").fillna(0).sum(),
+            "Total Compra":   pd.to_numeric(_df_p.get("Valor Compra Total", 0), errors="coerce").fillna(0).sum(),
+            "Inconsistentes": int((_df_p.get("Status", "").astype(str).str.strip() == "Inconsistente").sum()),
         })
     if linhas:
-        df_hist = pd.DataFrame(linhas).sort_values("Período")
+        df_hist = (
+            pd.DataFrame(linhas)
+            .groupby("Período", as_index=False).last()  # uma linha por período (já é o mais recente de cada)
+            .assign(_ord=lambda d: pd.to_datetime("01/" + d["Período"], format="%d/%m/%Y", errors="coerce"))
+            .sort_values("_ord")
+            .drop(columns="_ord")
+        )
         e1, e2 = st.columns(2)
         with e1:
             st.markdown("**Total Fatura x Total Compra**")
