@@ -12,6 +12,36 @@
 
 ## Histórico
 
+### V1.11.1 — 2026-06-18
+- Novo: na aba Aprovação, a coluna "Sit." agora é uma caixa de marcação editável — desmarcar um item justificado o reverte para Pendente (remove a justificativa salva no banco), sem precisar apagar o texto manualmente.
+
+### V1.11.0 — 2026-06-18
+- Novo: filtro "Tipo de Inconsistência" na tela de Auditoria, com categorias estáveis (ex.: "Direito sem fatura", "Desligado na fatura", "Valor empresa ≠ contrato") independentes dos valores numéricos do texto — permite isolar um tipo específico de inconsistência mesmo quando um registro acumula vários motivos.
+
+### V1.10.5 — 2026-06-17
+- Ajuste: removido da tela de Importação o aviso "X desligado(s) sem correspondência na base ativa" — a planilha de inativos acumula desligados de qualquer período, então é normal ter centenas sem relação com o mês atual; não era uma inconsistência acionável e só gerava ruído (a pedido da usuária).
+
+### V1.10.4 — 2026-06-17
+- Ajuste: na aba Exclusões, Valor Fatura/Mensalidade/Dependentes/Coparticipação agora são exibidos zerados — esses valores vinham da fatura do mês ANTERIOR (quando a pessoa ainda constava), e por definição ninguém da lista de exclusões tem cobrança na fatura atual. A pedido da usuária, para não dar impressão de cobrança vigente.
+
+### V1.10.3 — 2026-06-17
+- Novo: botão "📥 Exportar Excel (Exclusões)" na página de Exclusões, com a mesma quebra (Mensalidade/Dependentes/Coparticipação/Composição da Cobrança) exibida na tela.
+
+### V1.10.2 — 2026-06-17
+- Novo: tabela de Exclusões agora mostra a quebra do valor cobrado (Mensalidade / Dependentes / Coparticipação) e uma coluna "Composição da Cobrança", para saber se a cobrança de um desligado é mensalidade recorrente, coparticipação por uso já ocorrido, ou ambos — relevante para decidir se cabe exclusão retroativa.
+
+### V1.10.1 — 2026-06-17
+- Ajuste: texto de Inclusões/Exclusões para colar na Descrição agora é agrupado por Departamento, com contagem total no rodapé (TOTAL DE INCLUSÕES/EXCLUSÕES) para confirmar que todos entraram no arquivo.
+
+### V1.10.0 — 2026-06-17
+- Novo: botão "📋 Texto para copiar e colar (Descrição)" nas páginas de Inclusões e Exclusões — gera um bloco de texto por funcionário (FUNCIONARIO / INCLUSÃO ou EXCLUSÃO / VALOR) no formato usado para colar na Descrição de outro sistema, com opção de baixar .txt.
+
+### V1.9.4 — 2026-06-17
+- Fix: ao mesclar dados de desligados, "Tem Direito" e "Valor Contrato" ficavam com valor de fallback ("—" / R$ 0,00) mesmo quando o desligado tinha contrato real (ex: Temporário) com direito definido. Agora esses dois campos também são preenchidos a partir do registro encontrado na planilha de inativos.
+
+### V1.9.3 — 2026-06-17
+- Fix: instalado pacote `xlrd` (faltava no venv), corrigindo erro "Não foi possível encontrar o cabeçalho" ao importar planilhas de contratos/desligados em formato `.xls` (Excel 97-2003).
+
 ### V1.9.2 — 2026-05-14
 **Aprovação: remove UI de ordem de colunas + Exclusões: correção de erro ValueError**
 - `pages/6_Aprovação.py` — removido expander "📋 Ordem das colunas" e botão "💾 Salvar esta ordem". O sistema carrega automaticamente a última ordem gravada (JSON) sem interação do usuário.

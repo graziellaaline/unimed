@@ -114,6 +114,14 @@ with st.expander("🔍 Filtros", expanded=True):
     f_compra      = f7.selectbox("Está na Compra", inc_opts)
     f_justificado = f8.selectbox("Justificado", ["Todos", "Sim", "Não"])
 
+    tipos_inc = sorted({
+        t.strip()
+        for cell in df.get("Tipo Inconsistência", pd.Series(dtype=str)).dropna()
+        for t in str(cell).split("|")
+        if t.strip()
+    })
+    f_tipo_inc = st.multiselect("Tipo de Inconsistência", tipos_inc)
+
 df_f = df.copy()
 if f_status != "Todos":
     df_f = df_f[df_f["Status"] == f_status]
@@ -131,6 +139,10 @@ if f_compra != "Todos":
     df_f = df_f[df_f["Está na Compra"] == f_compra]
 if f_justificado != "Todos" and "Justificado" in df_f.columns:
     df_f = df_f[df_f["Justificado"] == f_justificado]
+if f_tipo_inc and "Tipo Inconsistência" in df_f.columns:
+    df_f = df_f[df_f["Tipo Inconsistência"].apply(
+        lambda cell: any(t in [p.strip() for p in str(cell).split("|")] for t in f_tipo_inc)
+    )]
 
 st.caption(f"**{len(df_f)}** registro(s) exibido(s)")
 
@@ -231,7 +243,7 @@ COLS_EX = [
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
     "Dif. Contrato x Compra", "Dif. Fatura x Compra",
     "Data Inclusão",
-    "Status", "Justificado", "Inconsistência", "Ação Sugerida",
+    "Status", "Justificado", "Tipo Inconsistência", "Inconsistência", "Ação Sugerida",
 ]
 cols_ok = [c for c in COLS_EX if c in df_f.columns]
 

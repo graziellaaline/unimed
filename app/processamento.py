@@ -1151,6 +1151,14 @@ def mesclar_desligados(
                     df_out.at[idx, campo_audit] = val_inativo
             df_out.at[idx, "_sem_contrato"] = False
 
+            # "Tem Direito" e "Valor Contrato" também ficavam com o valor de
+            # fallback ("—" / 0.0) porque vêm do registro de inativos, não do
+            # bloco "sem contrato" — sem isso a tela mostra "—" mesmo quando
+            # o desligado tinha um contrato real (ex: Temporário) com direito definido.
+            df_out.at[idx, "Tem Direito"]   = "Sim" if irow_matched.get("tem_direito") else "Não"
+            df_out.at[idx, "Valor Contrato"] = float(irow_matched.get("vlr_contrato", 0) or 0)
+            df_out.at[idx, "_inelegivel_contrato"] = bool(irow_matched.get("inelegivel_contrato", False))
+
         matched_norms.add((audit_mat, audit_nn))
 
     # ── Desligados não encontrados na auditoria (matrícula+nome sem par) ────────

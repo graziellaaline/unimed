@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ui import barra_lateral
 from app import db
 from app.processamento import _norm
+from app.exportacao import exportar_descricoes_unimed, exportar_excel_exclusoes
 
 st.set_page_config(page_title="Exclusões do Mês — Unimed", layout="wide")
 barra_lateral()
@@ -77,6 +78,13 @@ nomes_atuais = {_norm_nome(f) for f in fat_atual["Funcionário"].dropna()}
 
 mask   = fat_ant["Funcionário"].apply(lambda f: _norm_nome(f) not in nomes_atuais)
 df_exc = fat_ant[mask].copy()
+
+# Os valores em fat_ant são da fatura ANTERIOR (mês em que a pessoa ainda
+# constava). Como por definição ninguém desta lista está na fatura ATUAL,
+# zera os valores monetários para não dar a impressão de cobrança vigente.
+for _col_zerar in ["Valor Fatura", "_vlr_mensalidade_fat", "_vlr_dependente_fat", "_vlr_copart_fat"]:
+    if _col_zerar in df_exc.columns:
+        df_exc[_col_zerar] = 0.0
 
 # ── Enriquecer excluídos com dados dos inativos (para sem_contrato) ───────────
 # Funcionários que aparecem só na fatura (_sem_contrato) têm empresa/dept vazios.
@@ -222,12 +230,38 @@ if f_contrato != "Todos" and "Contrato Adm." in df_exc_f.columns:
 st.caption(f"**{len(df_exc_f)}** exclusão(ões) exibida(s)")
 
 # ── Tabela ────────────────────────────────────────────────────────────────────
+# Quebra do valor cobrado: mensalidade titular, dependentes e/ou coparticipação.
+# Importante para decidir se cabe exclusão retroativa (mensalidade é recorrente;
+# coparticipação é cobrança por uso já ocorrido — normalmente não é estornável).
+def _composicao(row) -> str:
+    partes = []
+    if float(row.get("_vlr_mensalidade_fat", 0) or 0) > 0:
+        partes.append("Mensalidade")
+    if float(row.get("_vlr_dependente_fat", 0) or 0) > 0:
+        partes.append("Dependentes")
+    if float(row.get("_vlr_copart_fat", 0) or 0) > 0:
+        partes.append("Coparticipação")
+    return " + ".join(partes) if partes else "—"
+
+if not df_exc_f.empty:
+    df_exc_f = df_exc_f.copy()
+    df_exc_f["Composição da Cobrança"] = df_exc_f.apply(_composicao, axis=1)
+
 COLS = [
     "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
-    "Dt. Admissão", "Dt. Demissão", "Valor Fatura", "Tem Direito",
+    "Dt. Admissão", "Dt. Demissão",
+    "_vlr_mensalidade_fat", "_vlr_dependente_fat", "_vlr_copart_fat",
+    "Composição da Cobrança", "Valor Fatura", "Tem Direito",
 ]
 cols_ok = [c for c in COLS if c in df_exc_f.columns]
 df_tab  = df_exc_f[cols_ok].copy().reset_index(drop=True)
+df_tab  = df_tab.rename(columns={
+    "_vlr_mensalidade_fat": "Mensalidade",
+    "_vlr_dependente_fat":  "Dependentes",
+    "_vlr_copart_fat":      "Coparticipação",
+})
+
+df_tab_excel = df_tab.copy()  # valores numéricos, antes de formatar como R$ texto
 
 def _brl(v):
     try:
@@ -235,10 +269,19 @@ def _brl(v):
     except Exception:
         return "—"
 
-if "Valor Fatura" in df_tab.columns:
-    df_tab["Valor Fatura"] = df_tab["Valor Fatura"].apply(_brl)
+for _col_moeda in ["Mensalidade", "Dependentes", "Coparticipação", "Valor Fatura"]:
+    if _col_moeda in df_tab.columns:
+        df_tab[_col_moeda] = df_tab[_col_moeda].apply(_brl)
 
 st.dataframe(df_tab, use_container_width=True, hide_index=True)
+
+excel_bytes_exc = exportar_excel_exclusoes(df_tab_excel, periodo)
+st.download_button(
+    "📥 Exportar Excel (Exclusões)",
+    data=excel_bytes_exc,
+    file_name=f"exclusoes_unimed_{periodo.replace('/', '_')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
 # ── Observação ────────────────────────────────────────────────────────────────
 st.divider()
@@ -250,3 +293,24 @@ Possíveis causas: desligamento, exclusão solicitada, ou ausência na fatura po
 
 Verifique se a exclusão foi solicitada formalmente e se há crédito ou acerto financeiro a realizar.
 """)
+
+# ── Export — blocos para colar em outro sistema ───────────────────────────────
+st.divider()
+st.subheader("📋 Texto para copiar e colar (Descrição)")
+
+_col_data_exc = "Dt. Demissão" if "Dt. Demissão" in df_exc_f.columns else None
+texto_desc_exc = exportar_descricoes_unimed(df_exc_f, "EXCLUSÃO", _col_data_exc or "")
+if texto_desc_exc:
+    st.text_area(
+        "Um bloco por funcionário — copie o trecho desejado ou baixe o arquivo completo abaixo",
+        value=texto_desc_exc,
+        height=240,
+    )
+    st.download_button(
+        "📥 Baixar .txt (Exclusões)",
+        data=texto_desc_exc.encode("utf-8"),
+        file_name=f"exclusoes_unimed_{periodo.replace('/', '_')}_descricao.txt",
+        mime="text/plain",
+    )
+else:
+    st.caption("Nenhuma exclusão para gerar texto.")

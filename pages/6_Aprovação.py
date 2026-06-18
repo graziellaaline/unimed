@@ -219,7 +219,7 @@ for _dc in _DATE_COLS:
 
 df_tab.insert(0, "☑", False)
 df_tab["Justificativa"] = df_tab["Funcionário"].map(lambda f: just_salvas.get(f, "") or "")
-df_tab["Sit."]          = df_tab["Funcionário"].map(lambda f: "✅" if just_salvas.get(f, "").strip() else "⏳")
+df_tab["Sit."]          = df_tab["Funcionário"].map(lambda f: bool(just_salvas.get(f, "").strip()))
 
 col_cfg = {
     "☑":                st.column_config.CheckboxColumn("☑", width="small"),
@@ -232,9 +232,12 @@ col_cfg = {
     "Inconsistência":   st.column_config.TextColumn("Inconsistência",   width="large"),
     "Ação Sugerida":    st.column_config.TextColumn("Ação Sugerida",    width="medium"),
     "Justificativa":    st.column_config.TextColumn("Justificativa",    width="large"),
-    "Sit.":             st.column_config.TextColumn("Sit.",             width="small"),
+    "Sit.":             st.column_config.CheckboxColumn(
+        "Sit.", width="small",
+        help="Desmarque para voltar o item para Pendente",
+    ),
 }
-cols_bloqueadas = [c for c in df_tab.columns if c not in ("☑", "Justificativa")]
+cols_bloqueadas = [c for c in df_tab.columns if c not in ("☑", "Justificativa", "Sit.")]
 
 _col_order_ativa = [c for c in st.session_state["col_order_aprov"] if c in df_tab.columns]
 
@@ -260,8 +263,14 @@ with sv1:
 with sv2:
     if st.button("💾 Salvar edições da tabela", use_container_width=True, type="primary"):
         saved = 0
+        revertidos = 0
         for _, row in edited.iterrows():
             func = str(row.get("Funcionário", ""))
+            sit_marcada = bool(row.get("Sit.", False))
+            if just_salvas.get(func, "").strip() and not sit_marcada:
+                db.excluir_justificativa(aid, func)
+                revertidos += 1
+                continue
             just = str(row.get("Justificativa", "")).strip()
             if not just:
                 continue
@@ -271,11 +280,16 @@ with sv2:
             if salvar_modelo_individual:
                 db.salvar_justificativa_modelo(cliente, func, desc, just)
             saved += 1
-        if saved:
-            st.success(f"{saved} justificativa(s) salva(s).")
+        if saved or revertidos:
+            msgs = []
+            if saved:
+                msgs.append(f"{saved} justificativa(s) salva(s)")
+            if revertidos:
+                msgs.append(f"{revertidos} revertida(s) para pendente")
+            st.success(" · ".join(msgs) + ".")
             st.rerun()
         else:
-            st.info("Nenhuma justificativa preenchida na tabela para salvar.")
+            st.info("Nenhuma alteração na tabela para salvar.")
 
 st.divider()
 

@@ -32,8 +32,16 @@ _COLUNAS_INCLUSOES = [
     "Período", "Valor Fatura", "Valor Contrato", "Tem Direito",
 ]
 
+_COLUNAS_EXCLUSOES = [
+    "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
+    "Dt. Admissão", "Dt. Demissão",
+    "Mensalidade", "Dependentes", "Coparticipação", "Composição da Cobrança",
+    "Valor Fatura", "Tem Direito",
+]
+
 _MOEDA = {"Valor Fatura", "Valor Empresa (Compra)", "Valor Compra Total",
-          "Valor Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra"}
+          "Valor Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra",
+          "Mensalidade", "Dependentes", "Coparticipação"}
 
 
 def _header(ws, colunas: list, cor_hex: str):
@@ -69,6 +77,63 @@ def _escrever_dados(ws, df: pd.DataFrame, colunas: list, cor_status=True):
                 c.fill = fill
             c.font = Font(size=10)
             c.alignment = Alignment(vertical="center", wrap_text=True)
+
+
+def exportar_descricoes_unimed(df: pd.DataFrame, tipo: str, col_data: str) -> str:
+    """
+    Gera blocos de texto no formato usado para colar no campo "Descrição" de
+    outro sistema, um bloco por funcionário, agrupados por Departamento e com
+    contagem total no rodapé (para confirmar que todos entraram no arquivo):
+
+        ===== DEPARTAMENTO: CORTEVA TOLEDO_240 TERC =====
+
+        INCLUSÃO DE UNIMED
+        FUNCIONARIO: TIAGO DIAS RODRIGUES
+        INCLUSÃO: 05/06/2026
+        VALOR: R$ 357,93
+
+        --------------------------------------------------
+        TOTAL DE INCLUSÕES: 1
+
+    tipo: "INCLUSÃO" ou "EXCLUSÃO"
+    col_data: coluna do df com a data a usar (ex: "Data Inclusão" ou "Dt. Demissão")
+    """
+    if df.empty:
+        return ""
+
+    df = df.copy()
+    deptos = df.get("Departamento", pd.Series("", index=df.index)).fillna("").astype(str).str.strip()
+    deptos = deptos.where(deptos != "", "SEM DEPARTAMENTO")
+    df["_depto_export"] = deptos
+
+    secoes = []
+    total = 0
+    for depto in sorted(df["_depto_export"].unique()):
+        linhas_depto = df[df["_depto_export"] == depto]
+        blocos = []
+        for _, row in linhas_depto.iterrows():
+            nome = str(row.get("Funcionário", "") or "").strip()
+            if not nome:
+                continue
+            data = str(row.get(col_data, "") or "").strip() if col_data else ""
+            try:
+                valor = float(row.get("Valor Fatura", 0) or 0)
+            except Exception:
+                valor = 0.0
+            valor_fmt = f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            blocos.append(
+                f"{tipo} DE UNIMED\n"
+                f"FUNCIONARIO: {nome}\n"
+                f"{tipo}: {data}\n"
+                f"VALOR: {valor_fmt}"
+            )
+            total += 1
+        if blocos:
+            secoes.append(f"===== DEPARTAMENTO: {depto} =====\n\n" + "\n\n".join(blocos))
+
+    rotulo_total = tipo.replace("ÃO", "ÕES")
+    rodape = f"{'-'*50}\nTOTAL DE {rotulo_total}: {total}"
+    return "\n\n".join(secoes) + "\n\n" + rodape
 
 
 def exportar_excel(df: pd.DataFrame,
@@ -109,6 +174,26 @@ def exportar_excel(df: pd.DataFrame,
             _ajustar_larguras(ws3)
     else:
         ws3.cell(row=1, column=1, value="Nenhuma justificativa registrada.")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def exportar_excel_exclusoes(df_exc: pd.DataFrame, periodo: str) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Exclusões"
+    cols = [c for c in _COLUNAS_EXCLUSOES if c in df_exc.columns]
+    if cols:
+        _header(ws, cols, _COR["header_inc"])
+        if not df_exc.empty:
+            _escrever_dados(ws, df_exc, cols, cor_status=False)
+        _ajustar_larguras(ws)
+        ws.freeze_panes = "A2"
+    else:
+        ws.cell(row=1, column=1, value=f"Nenhuma exclusão no período {periodo}.")
 
     buf = io.BytesIO()
     wb.save(buf)

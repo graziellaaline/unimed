@@ -8,7 +8,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ui import barra_lateral
-from app.exportacao import exportar_excel
+from app.exportacao import exportar_excel, exportar_descricoes_unimed
 from app.regras import identificar_incluidos_mes, aplicar_regras, calcular_stats
 from app import db
 
@@ -227,3 +227,23 @@ st.download_button(
     file_name=f"inclusoes_unimed_{periodo.replace('/', '_')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
+# ── Export — blocos para colar em outro sistema ───────────────────────────────
+st.divider()
+st.subheader("📋 Texto para copiar e colar (Descrição)")
+
+texto_desc = exportar_descricoes_unimed(df_f, "INCLUSÃO", "Data Inclusão")
+if texto_desc:
+    st.text_area(
+        "Um bloco por funcionário — copie o trecho desejado ou baixe o arquivo completo abaixo",
+        value=texto_desc,
+        height=240,
+    )
+    st.download_button(
+        "📥 Baixar .txt (Inclusões)",
+        data=texto_desc.encode("utf-8"),
+        file_name=f"inclusoes_unimed_{periodo.replace('/', '_')}_descricao.txt",
+        mime="text/plain",
+    )
+else:
+    st.caption("Nenhuma inclusão para gerar texto.")

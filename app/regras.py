@@ -57,7 +57,7 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
             axis=1,
         )
 
-    status_list, desc_list, acao_list = [], [], []
+    status_list, desc_list, acao_list, tipo_list = [], [], [], []
 
     for _, row in df.iterrows():
         # Inelegível = sem direito por regra contratual/departamental.
@@ -79,10 +79,12 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
                 acao_list.append(
                     "Verificar e solicitar exclusão do plano conforme modalidade contratual"
                 )
+                tipo_list.append("Sem elegibilidade (contrato/departamento)")
             else:
                 status_list.append("OK")
                 desc_list.append("")
                 acao_list.append("")
+                tipo_list.append("")
             continue
 
         # Funcionário em período de experiência (< 90 dias da admissão)
@@ -103,10 +105,12 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
                     f" — {' e '.join(_partes)} indevido(s)"
                 )
                 acao_list.append("Remover do plano até completar 90 dias da admissão")
+                tipo_list.append("Período de experiência")
             else:
                 status_list.append("OK")
                 desc_list.append("")
                 acao_list.append("")
+                tipo_list.append("")
             continue
 
         tem_direito  = str(row.get("Tem Direito", "Não"))
@@ -121,26 +125,31 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
 
         inc = []
         acoes = []
+        tipos = []
 
         # R1 — Tem direito e não está na fatura
         if tem_direito == "Sim" and not na_fatura and not desligado:
             inc.append("Tem direito ao plano mas não consta na fatura Unimed")
             acoes.append("Verificar inclusão junto à Unimed")
+            tipos.append("Direito sem fatura")
 
         # R2 — Tem direito, está na fatura, mas não está na compra
         if tem_direito == "Sim" and na_fatura and not na_compra:
             inc.append("Consta na fatura mas não há lançamento de compra")
             acoes.append("Lançar a compra no sistema")
+            tipos.append("Fatura sem compra")
 
         # R3 — Não tem direito e está na fatura
         if tem_direito == "Não" and na_fatura:
             inc.append("Sem valor previsto no contrato mas consta na fatura")
             acoes.append("Verificar se valor do plano está preenchido no contrato")
+            tipos.append("Sem direito mas na fatura")
 
         # R4 — Na compra mas não na fatura
         if na_compra and not na_fatura:
             inc.append("Lançado na compra mas não consta na fatura Unimed")
             acoes.append("Verificar se lançamento é indevido ou se fatura está incompleta")
+            tipos.append("Compra sem fatura")
 
         # R5 — Valor empresa (compra) vs contrato
         # Para ANATACHA: empresa cobre mensalidade titular + dependentes (não só o contrato titular).
@@ -158,12 +167,14 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
                     f"titular+dependentes na fatura (R$ {esperado_emp:.2f})"
                 )
                 acoes.append("Ajustar compra empresa para cobrir mensalidade titular + dependentes")
+                tipos.append("ANATACHA — mensalidade")
             if vlr_cop_fat > 0 and abs(vlr_func_cmp - vlr_cop_fat) > 0.10:
                 inc.append(
                     f"ANATACHA — compra funcionária (R$ {vlr_func_cmp:.2f}) difere da "
                     f"coparticipação na fatura (R$ {vlr_cop_fat:.2f})"
                 )
                 acoes.append("Ajustar compra funcionária para cobrir apenas coparticipações")
+                tipos.append("ANATACHA — coparticipação")
         elif not anatacha and na_compra and vlr_cont > 0 and vlr_emp > 0:
             dif_cont = vlr_emp - vlr_cont
             if dif_cont > 0.10:
@@ -172,6 +183,7 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
                     f"(R$ {vlr_cont:.2f}) — diferença R$ {dif_cont:.2f}"
                 )
                 acoes.append("Ajustar valor da compra empresa para coincidir com o contrato")
+                tipos.append("Valor empresa ≠ contrato")
 
         # R6 — Total compra (titular + dependentes) difere da fatura
         if na_fatura and na_compra and vlr_fat > 0 and vlr_comp_tot > 0:
@@ -182,29 +194,35 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
                     f"(R$ {vlr_fat:.2f}) — diferença R$ {dif_fat:.2f}"
                 )
                 acoes.append("Verificar lançamentos de titular e dependentes na compra")
+                tipos.append("Total compra ≠ fatura")
 
         # R7 — Funcionário desligado sendo cobrado
         if desligado and na_fatura:
             inc.append("Funcionário desligado consta na fatura")
             acoes.append("Solicitar exclusão retroativa à Unimed")
+            tipos.append("Desligado na fatura")
 
         # R8 — Sem correspondência no contrato
         if sem_contrato and na_fatura:
             inc.append("Consta na fatura sem correspondência na planilha de contratos")
             acoes.append("Verificar vínculo empregatício")
+            tipos.append("Sem correspondência no contrato")
 
         if inc:
             status_list.append("Inconsistente")
             desc_list.append(" | ".join(inc))
             acao_list.append(" | ".join(acoes))
+            tipo_list.append(" | ".join(tipos))
         else:
             status_list.append("OK")
             desc_list.append("")
             acao_list.append("")
+            tipo_list.append("")
 
-    df["Status"]        = status_list
-    df["Inconsistência"] = desc_list
-    df["Ação Sugerida"] = acao_list
+    df["Status"]            = status_list
+    df["Inconsistência"]    = desc_list
+    df["Ação Sugerida"]     = acao_list
+    df["Tipo Inconsistência"] = tipo_list
     return df
 
 

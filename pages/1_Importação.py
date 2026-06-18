@@ -90,22 +90,19 @@ def _mostrar_relatorio_desligados(relatorio: dict):
     if not relatorio:
         return
 
-    sem_match  = relatorio.get("sem_match", [])
     sem_dt     = relatorio.get("sem_dt", [])
     pendencias = relatorio.get("pendencias", [])
 
-    tem_algo = any([sem_match, sem_dt, pendencias])
+    # "sem_match" (desligados sem correspondência na base ativa) não é exibido:
+    # a planilha de inativos acumula desligados de qualquer época, então é normal
+    # ter centenas que não pertencem ao período atual — não é uma inconsistência
+    # acionável para a usuária.
+    tem_algo = any([sem_dt, pendencias])
     if not tem_algo:
         st.success("✅ Todos os desligados foram vinculados por matrícula+nome sem inconsistências.")
         return
 
-    with st.expander("⚠�? Inconsistências da planilha de desligados", expanded=True):
-        if sem_match:
-            st.markdown(f"**�? {len(sem_match)} desligado(s) sem correspondência na base ativa**")
-            st.caption("Matrícula + nome não coincidem com nenhum funcionário da planilha de contratos ativos.")
-            st.dataframe(pd.DataFrame({"Nome na planilha de inativos": sem_match}),
-                         use_container_width=True, hide_index=True)
-
+    with st.expander("⚠️ Inconsistências da planilha de desligados", expanded=True):
         if sem_dt:
             st.markdown(f"**📅 {len(sem_dt)} desligado(s) sem data de demissão na planilha**")
             st.caption("Encontrados na base mas a planilha não tem data — demissão não foi atualizada.")

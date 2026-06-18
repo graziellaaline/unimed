@@ -279,6 +279,16 @@ def salvar_justificativa(auditoria_id: int, funcionario: str,
     con.close()
 
 
+def excluir_justificativa(auditoria_id: int, funcionario: str):
+    con = _conn()
+    con.execute(
+        "DELETE FROM justificativas WHERE auditoria_id=? AND funcionario=?",
+        (auditoria_id, funcionario)
+    )
+    con.commit()
+    con.close()
+
+
 def carregar_justificativas(auditoria_id: int) -> dict:
     """Retorna {funcionario: justificativa}"""
     if not auditoria_id:
