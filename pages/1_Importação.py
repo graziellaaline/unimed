@@ -10,7 +10,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.ui import barra_lateral
+from app.ui import barra_lateral, tabela
 from app.processamento import (ler_contratos, ler_compra,
                                  ler_faturas_csv, cruzar, mesclar_desligados,
                                  _encontrar_col, _encontrar_col_prioritaria,
@@ -106,15 +106,15 @@ def _mostrar_relatorio_desligados(relatorio: dict):
         if sem_dt:
             st.markdown(f"**📅 {len(sem_dt)} desligado(s) sem data de demissão na planilha**")
             st.caption("Encontrados na base mas a planilha não tem data — demissão não foi atualizada.")
-            st.dataframe(pd.DataFrame({"Nome": sem_dt}), use_container_width=True, hide_index=True)
+            tabela(pd.DataFrame({"Nome": sem_dt}), use_container_width=True, hide_index=True)
 
         if pendencias:
-            st.markdown(f"**�?� {len(pendencias)} funcionário(s) com status desligado mas sem data de demissão**")
+            st.markdown(f"**⚠️ {len(pendencias)} funcionário(s) com status desligado mas sem data de demissão**")
             st.caption(
                 "Marcados como desligados (do contratos ou da planilha) sem data disponível — "
                 "revise a planilha de desligados."
             )
-            st.dataframe(pd.DataFrame({"Funcionário": pendencias}), use_container_width=True, hide_index=True)
+            tabela(pd.DataFrame({"Funcionário": pendencias}), use_container_width=True, hide_index=True)
 
 
 # ── Auto-carregar arquivos_fontes quando sessão reinicia ─────────────────────
@@ -133,7 +133,7 @@ if "df_audit" in st.session_state and st.session_state["df_audit"] is not None:
         f"✅ Auditoria **{_periodo_atual}** carregada — "
         f"{st.session_state.get('stats', {}).get('ok', 0)} OK · "
         f"{st.session_state.get('stats', {}).get('inconsistente', 0)} inconsistências. "
-        "Acesse **5 · Auditoria** no menu."
+        "Acesse **5 · Auditoria e Aprovação** no menu."
     )
     # Mostrar relatório de desligados da sessão, se houver
     _rel_sessao = st.session_state.get("relatorio_desligados", {})
@@ -186,7 +186,7 @@ elif _ultimos:
                 )
                 st.success(
                     f"✅ Auditoria **{_ultimo['periodo']}** carregada! "
-                    "Acesse **5 · Auditoria** no menu à esquerda."
+                    "Acesse **5 · Auditoria e Aprovação** no menu à esquerda."
                 )
                 st.rerun()
             else:
@@ -409,11 +409,11 @@ def _ler_colunas_arq(arq, grupos_keywords=None):
 
 
 def _icone(col):
-    return "✅" if col else "⚠�?"
+    return "✅" if col else "⚠️"
 
 
 if arq_cont or arq_fats or arq_comp or arq_desl:
-    with st.expander("�? Colunas detectadas automaticamente", expanded=True):
+    with st.expander("🔍 Colunas detectadas automaticamente", expanded=True):
         dc1, dc2, dc3, dc4 = st.columns(4)
 
         def _mostrar_cols(titulo, cols, mapa_campos):
@@ -551,7 +551,7 @@ if btn:
         if relatorio:
             _mostrar_relatorio_desligados(relatorio)
 
-        st.info("👉 Acesse **5 · Auditoria** no menu à esquerda para ver o resultado.")
+        st.info("👉 Acesse **5 · Auditoria e Aprovação** no menu à esquerda para ver o resultado.")
 
     except Exception as exc:
         st.error(f"Erro ao processar: {exc}")

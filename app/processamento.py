@@ -41,7 +41,14 @@ def _encontrar_col(df: pd.DataFrame, *keywords) -> Optional[str]:
     return None
 
 
-def _encontrar_col_prioritaria(df: pd.DataFrame, *keywords) -> Optional[str]:
+def _encontrar_col_prioritaria(df: pd.DataFrame, *keywords, evitar: tuple = ()) -> Optional[str]:
+    """
+    Escolhe a coluna que melhor casa com as keywords, preferindo nome exato.
+
+    `evitar` derruba colunas-armadilha: a planilha de inativos tem
+    "Contrato Admissão" (tipo de contrato) ao lado de "Admissão" (a data), e a
+    busca por substring pegava a primeira das duas.
+    """
     melhor_col = None
     melhor_score = -1
 
@@ -65,6 +72,9 @@ def _encontrar_col_prioritaria(df: pd.DataFrame, *keywords) -> Optional[str]:
 
             if any(bloq in col_n for bloq in ("MATRIC", "COD", "CODIGO", "CHAPA", "ID ")) and "nome" in kw_n:
                 score -= 100
+
+            if any(_norm(e).lower() in col_n for e in evitar):
+                score -= 200
 
             if score > melhor_score:
                 melhor_col = col
@@ -253,6 +263,95 @@ def _str(v) -> str:
     return "" if s.lower() in ("nan", "none") else s
 
 
+# ── Identidade do titular entre meses ────────────────────────────────────────
+# Comparar dois meses pelo nome não funciona: quem casa/muda de nome vira uma
+# "exclusão" em um mês e uma "inclusão" no outro, todo mês. A matrícula é a
+# chave estável — mas matrícula pode ser reciclada para outra pessoa, então só
+# vale como mesma pessoa se o nome ou a data de admissão também baterem.
+
+def _cod_fatura(matricula, carteirinha="") -> str:
+    """Matrícula do funcionário na fatura, ou "" quando não é matrícula.
+
+    A coluna "Matrícula" da fatura Unimed vem preenchida com o número da
+    carteirinha quando a empresa não cadastrou a matrícula — nesse caso o valor
+    repete a coluna "Código" (16 dígitos) e não serve para cruzar com o RH.
+    """
+    s = _str(matricula)
+    if s.endswith(".0"):
+        s = s[:-2]
+    if not s or not s.strip("0"):          # vazio, "0", "000"
+        return ""
+    if s == _str(carteirinha):             # repetiu a carteirinha
+        return ""
+    if len(s.lstrip("0")) >= 12:           # número de carteirinha
+        return ""
+    return cod_func_chave(s)
+
+
+def cod_func_chave(v) -> str:
+    """Matrícula comparável: 900295 / '900295.0' / ' 0900295 ' → '900295'."""
+    s = str(v if v is not None else "").strip()
+    if not s or s.lower() in ("nan", "none"):
+        return ""
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s.lstrip("0") or "0"
+
+
+def indice_titulares(df: pd.DataFrame,
+                     col_nome: str = "Funcionário",
+                     col_cod: str = "Cod. Funcionário",
+                     col_adm: str = "Dt. Admissão") -> dict:
+    """Índice de um mês para comparar com outro (ver `localizar_titular`)."""
+    por_cod: dict = {}
+    por_nome: dict = {}
+    if df is None or df.empty or col_nome not in df.columns:
+        return {"por_cod": por_cod, "por_nome": por_nome}
+
+    for _, row in df.iterrows():
+        nome = str(row.get(col_nome, "") or "").strip()
+        nn   = _norm(nome)
+        if not nn:
+            continue
+        reg = {
+            "nome": nome,
+            "nn":   nn,
+            "cod":  cod_func_chave(row.get(col_cod)),
+            "adm":  _fmt_data(row.get(col_adm)),
+        }
+        if reg["cod"]:
+            por_cod.setdefault(reg["cod"], reg)
+        por_nome.setdefault(nn, reg)
+    return {"por_cod": por_cod, "por_nome": por_nome}
+
+
+def localizar_titular(row, indice: dict,
+                      col_nome: str = "Funcionário",
+                      col_cod: str = "Cod. Funcionário",
+                      col_adm: str = "Dt. Admissão") -> tuple:
+    """Procura a linha no índice do outro mês.
+
+    Casa por matrícula quando nome OU data de admissão confirmam ser a mesma
+    pessoa (cobre mudança de nome); senão tenta pelo nome (cobre quem não tem
+    matrícula, como o funcionário que aparece só na fatura).
+
+    Retorna (encontrado, registro_do_indice | None).
+    """
+    nn  = _norm(str(row.get(col_nome, "") or ""))
+    cod = cod_func_chave(row.get(col_cod))
+    adm = _fmt_data(row.get(col_adm))
+
+    if cod:
+        cand = indice["por_cod"].get(cod)
+        if cand and (cand["nn"] == nn or (adm and cand["adm"] == adm)):
+            return True, cand
+
+    cand = indice["por_nome"].get(nn) if nn else None
+    if cand:
+        return True, cand
+    return False, None
+
+
 # ---------------------------------------------------------------------------
 # Leitura das 3 fontes
 # ---------------------------------------------------------------------------
@@ -315,6 +414,12 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
         # 2. detecção por keyword no nome da coluna
         return _encontrar_col(df, *defs)
 
+    def col_data(key, *defs, evitar: tuple = ()):
+        """Como `col`, mas preferindo nome exato e recusando colunas-armadilha."""
+        if col_map.get(key):
+            return col_map[key]
+        return _encontrar_col_prioritaria(df, *defs, evitar=evitar)
+
     c = {
         "cod_func":     col("cod_func",
                             "cod. func", "cód. func.", "cod func", "codigo", "código", "matricula",
@@ -339,9 +444,14 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
                             "mensalidade", "vlr. plano", "ps titular", "plano",
                             "valor mensal", "mensal titular", "mensalidade titular",
                             "valor titular", "valor mensal titular"),
-        "admissao":     col("admissao",
-                            "admissao", "dt. admissao", "dt. admissão", "data admissao", "data admissão",
-                            "dt admissao", "dt. admissão", "admissão", "dt adm", "data adm"),
+        # A planilha de ATIVOS chama de "Dt. Admissão"; a de INATIVOS chama de
+        # "Admissão" e traz, logo antes, "Contrato Admissão" — que é o TIPO do
+        # contrato. A busca por substring pegava essa primeira e o campo de data
+        # vinha com "IN - Indeterminado". Daí a busca priorizada + `evitar`.
+        "admissao":     col_data("admissao",
+                            "dt. admissao", "dt. admissão", "data admissao", "data admissão",
+                            "dt admissao", "dt adm", "data adm", "admissao", "admissão",
+                            evitar=("contrato",)),
         "contrato_adm": col("contrato_adm",
                             "contrato adm", "contrato administrativo", "contrato adm.",
                             "contr. adm", "contrato adm/", "contrato adm ",
@@ -471,6 +581,10 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
         "data_inclusao": col("data_inclusao",  "data inclusao", "data de inclusao", "dt. inclusao",
                              "dt inclusao", "inclusao", "dt. inclusão", "data inclusão"),
         "nascimento":    col("nascimento",     "nascimento", "data nasc", "dt nasc", "data de nascimento"),
+        # Matrícula do funcionário na fatura. Só "matrícula"/"chapa" — a coluna
+        # "Código" ao lado é o número da carteirinha, não serve para cruzar.
+        "cod_func":      col("cod_func_fatura", "matricula", "matrícula", "chapa"),
+        "carteirinha":   col("carteirinha",    "codigo", "código"),
     }
 
     obrigatorias = {
@@ -525,6 +639,8 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
         valor    = _parse_brl(row.get(c["valor"]) if c["valor"] else 0)
         data_inc = _fmt_data(row.get(c["data_inclusao"]) if c["data_inclusao"] else "")
         nasc     = _fmt_data(row.get(c["nascimento"])    if c["nascimento"]    else "")
+        cod_fat  = _cod_fatura(row.get(c["cod_func"])    if c["cod_func"]    else "",
+                               row.get(c["carteirinha"]) if c["carteirinha"] else "")
 
         # Determina a chave de agrupamento.
         # Se a coluna é "Titular": nome_norm já é o funcionário correto em todas as linhas.
@@ -541,6 +657,7 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
             titulares[nome_key] = {
                 "nome":            nome_raw,
                 "nascimento":      nasc,
+                "cod_func":        cod_fat,
                 "vlr_mensalidade": 0.0,
                 "vlr_dependente":  0.0,
                 "vlr_copart":      0.0,
@@ -551,6 +668,8 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
                 titulares[nome_key]["data_inclusao"] = data_inc
             if nasc and not titulares[nome_key]["nascimento"]:
                 titulares[nome_key]["nascimento"] = nasc
+            if cod_fat and not titulares[nome_key]["cod_func"]:
+                titulares[nome_key]["cod_func"] = cod_fat
 
         if eh_titular and eh_mensalidade:
             titulares[nome_key]["vlr_mensalidade"] += valor
@@ -574,6 +693,7 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
         rows.append({
             "nome_fatura":        d["nome"],
             "_norm_fatura":       nome_norm,
+            "cod_func_fatura":    d["cod_func"],
             "nascimento_fat":     d["nascimento"],
             "vlr_mensalidade":    vlr_mens,
             "vlr_dependente":     vlr_dep,
@@ -584,7 +704,7 @@ def ler_fatura_csv(path, col_map: dict = None) -> pd.DataFrame:
         })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["nome_fatura", "_norm_fatura", "nascimento_fat",
+        columns=["nome_fatura", "_norm_fatura", "cod_func_fatura", "nascimento_fat",
                  "vlr_fatura", "vlr_mensalidade", "vlr_dependente",
                  "vlr_copart", "data_inclusao"]
     )
@@ -597,7 +717,7 @@ def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
     """
     if not paths:
         return pd.DataFrame(
-            columns=["nome_fatura", "_norm_fatura", "nascimento_fat",
+            columns=["nome_fatura", "_norm_fatura", "cod_func_fatura", "nascimento_fat",
                      "vlr_fatura", "vlr_mensalidade", "vlr_dependente",
                      "vlr_copart", "data_inclusao"]
         )
@@ -619,7 +739,7 @@ def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
 
     if not partes:
         return pd.DataFrame(
-            columns=["nome_fatura", "_norm_fatura", "nascimento_fat",
+            columns=["nome_fatura", "_norm_fatura", "cod_func_fatura", "nascimento_fat",
                      "vlr_fatura", "vlr_mensalidade", "vlr_dependente",
                      "vlr_copart", "data_inclusao"]
         )
@@ -646,6 +766,7 @@ def ler_faturas_csv(paths: list, col_map: dict = None) -> pd.DataFrame:
         df_all.groupby("_norm_fatura", as_index=False)
         .agg(
             nome_fatura    =("nome_fatura",    "first"),
+            cod_func_fatura=("cod_func_fatura", lambda s: next((v for v in s if str(v).strip()), "")),
             nascimento_fat =("nascimento_fat", "first"),
             vlr_fatura     =("vlr_fatura",     "sum"),
             vlr_mensalidade=("vlr_mensalidade","sum"),
@@ -818,6 +939,65 @@ def _match_nome(nome_a: str, nomes_b: list, threshold=0.72) -> Optional[int]:
     return best_i
 
 
+def _alocar(df_cont: pd.DataFrame, df_alvo: pd.DataFrame,
+            col_nome: str, col_cod: str = "") -> dict:
+    """Casa cada funcionário do contrato com no máximo uma linha do alvo.
+
+    Retorna {posição na planilha de contratos → posição no alvo}.
+
+    1ª passada: nome idêntico (com homônimos, a matrícula desempata).
+    2ª passada: nome parecido — descartado quando os dois lados têm matrícula e
+    elas divergem. É o que separa pessoas de nome parecido ("JADIELSON DA SILVA
+    SANTOS" x "DANILO DA SILVA SANTOS", "GABRIEL OLIVEIRA RIBEIRO" x "GABRIEL
+    DE OLIVEIRA REIS"), que antes eram tratadas como a mesma pessoa.
+
+    A matrícula nunca casa sozinha: a numeração da fatura não é a mesma do RH
+    (a mesma pessoa aparece com matrículas diferentes nos dois arquivos), então
+    ela só serve para confirmar ou vetar um casamento por nome.
+    """
+    if df_alvo is None or df_alvo.empty or df_cont.empty:
+        return {}
+
+    nomes = df_alvo[col_nome].tolist()
+    cods  = ([cod_func_chave(v) for v in df_alvo[col_cod]]
+             if col_cod and col_cod in df_alvo.columns else [""] * len(nomes))
+
+    por_nome: dict = {}
+    for i, n in enumerate(nomes):
+        por_nome.setdefault(n, []).append(i)
+
+    aloc: dict = {}
+    usadas: set = set()
+    pendentes: list = []
+
+    for pos, (_, cont) in enumerate(df_cont.iterrows()):
+        nn = cont["_norm_func"]
+        cc = cod_func_chave(cont.get("cod_func", ""))
+        candidatos = [i for i in por_nome.get(nn, []) if i not in usadas]
+        if not candidatos:
+            pendentes.append((pos, nn, cc))
+            continue
+        escolhido = next((i for i in candidatos if cc and cods[i] == cc), candidatos[0])
+        aloc[pos] = escolhido
+        usadas.add(escolhido)
+
+    livres = [i for i in range(len(nomes)) if i not in usadas]
+    for pos, nn, cc in pendentes:
+        if not livres:
+            break
+        j = _match_nome(nn, [nomes[i] for i in livres])
+        if j is None:
+            continue
+        i = livres[j]
+        if cc and cods[i] and cods[i] != cc:
+            continue          # nome parecido + matrícula diferente = outra pessoa
+        aloc[pos] = i
+        usadas.add(i)
+        livres.remove(i)
+
+    return aloc
+
+
 # ---------------------------------------------------------------------------
 # Cruzamento principal
 # ---------------------------------------------------------------------------
@@ -833,29 +1013,23 @@ def cruzar(df_cont: pd.DataFrame,
     fat_nomes    = df_fat["_norm_fatura"].tolist()    if not df_fat.empty    else []
     compra_nomes = df_compra["_norm_compra"].tolist() if not df_compra.empty else []
 
-    fat_usadas    = set()
-    compra_usadas = set()
+    # Alocação nome-a-nome resolvida de uma vez (exatos primeiro, parecidos
+    # depois, com a matrícula vetando parecidos de pessoas diferentes).
+    aloc_fat    = _alocar(df_cont, df_fat,    "_norm_fatura", "cod_func_fatura")
+    aloc_compra = _alocar(df_cont, df_compra, "_norm_compra", "cod_func_compra")
+
+    fat_usadas    = set(aloc_fat.values())
+    compra_usadas = set(aloc_compra.values())
     resultado     = []
 
     dt_ref = _dt_ref_periodo(periodo)   # primeiro dia do mês de referência (para regra dos 90 dias)
 
     # ── 1. Funcionários do contrato ─────────────────────────────────────────
-    for _, cont in df_cont.iterrows():
+    for _pos_cont, (_, cont) in enumerate(df_cont.iterrows()):
         nome_c = cont["_norm_func"]
 
-        fat_idx = None
-        if fat_nomes:
-            idx = _match_nome(nome_c, fat_nomes)
-            if idx is not None and idx not in fat_usadas:
-                fat_idx = idx
-                fat_usadas.add(idx)
-
-        compra_idx = None
-        if compra_nomes:
-            idx = _match_nome(nome_c, compra_nomes)
-            if idx is not None and idx not in compra_usadas:
-                compra_idx = idx
-                compra_usadas.add(idx)
+        fat_idx    = aloc_fat.get(_pos_cont)
+        compra_idx = aloc_compra.get(_pos_cont)
 
         fat   = df_fat.iloc[fat_idx]     if fat_idx    is not None else None
         comp  = df_compra.iloc[compra_idx] if compra_idx is not None else None
@@ -943,7 +1117,9 @@ def cruzar(df_cont: pd.DataFrame,
             "Empresa":                "",
             "Departamento":           "",
             "Contrato Adm.":          "",
-            "Cod. Funcionário":       "",
+            # Matrícula da própria fatura — é ela que liga esta linha ao
+            # cadastro certo na planilha de inativos (evita pegar homônimo).
+            "Cod. Funcionário":       str(fat.get("cod_func_fatura", "") or ""),
             "Tem Direito":            "—",
             "Está na Fatura":         "Sim",
             "Está na Compra":         "Sim" if comp is not None else "Não",
@@ -1013,6 +1189,33 @@ def cruzar(df_cont: pd.DataFrame,
 # Mesclagem de planilha de desligados
 # ---------------------------------------------------------------------------
 
+def _inativo_por_nome_estendido(audit_nn: str, nome_map: dict):
+    """
+    Casamento de último recurso para quem aparece SÓ na fatura, sem matrícula.
+
+    Cobre mudança de nome por casamento: a fatura traz `LETICIA BARBON VITORINI`
+    e a planilha de inativos, `LETICIA BARBON VITORINI HUHN`. Sem isso a
+    demissão nunca era anexada e a pessoa aparecia como "nova titular" todo mês,
+    em vez de ir para a tela de cobrança indevida.
+
+    Guardas para não repetir o estrago do V1.16.0 (juntar pessoas diferentes):
+    • um nome tem de ser o COMEÇO exato do outro — sobrenome ACRESCENTADO, nunca
+      trocado (`GABRIEL OLIVEIRA RIBEIRO` e `GABRIEL DE OLIVEIRA REIS` não casam);
+    • o nome mais curto precisa ter ao menos 3 partes, senão `MARIA SILVA`
+      casaria com meia planilha;
+    • tem de haver UM único candidato — dois significa homônimo, e aí é melhor
+      não casar do que casar errado.
+    """
+    if len(audit_nn.split()) < 3:
+        return None
+    achados = [
+        nn for nn in nome_map
+        if (nn.startswith(audit_nn + " ") or audit_nn.startswith(nn + " "))
+        and len(nn.split()) >= 3
+    ]
+    return nome_map[achados[0]] if len(achados) == 1 else None
+
+
 def mesclar_desligados(
     df_audit: pd.DataFrame,
     df_inativos: "pd.DataFrame | None",
@@ -1021,7 +1224,7 @@ def mesclar_desligados(
     """
     Mescla dados da planilha de contratos INATIVOS (lida com ler_contratos) em df_audit.
 
-    A planilha de inativos tem a mesma estrutura da de ativos. Fornece:
+    A planilha de inativos tem layout PRÓPRIO (ver `ler_contratos`). Fornece:
       - Dt. Demissão (campo 'demissao' do ler_contratos)
       - Empresa, Departamento, Contrato Adm., Dt. Admissão, Cod. Funcionário
         (para funcionários _sem_contrato que aparecem só na fatura)
@@ -1061,12 +1264,15 @@ def mesclar_desligados(
     # Nome igual com matrícula diferente = novo contrato → não preenche demissão.
     mat_nome_map: dict = {}   # (cod_func, _norm_func) → Series  (matching estrito)
     nome_map:     dict = {}   # _norm_func → Series               (sem_contrato apenas)
+    cod_map:      dict = {}   # cod_func → [Series]               (confirma por admissão)
 
     for _, irow in df_inativos.iterrows():
         cod = str(irow.get("cod_func", "") or "").strip()
         nn  = str(irow.get("_norm_func", "") or "").strip()
         if cod and nn:
-            mat_nome_map[(cod, nn)] = irow
+            mat_nome_map[(cod_func_chave(cod), nn)] = irow
+        if cod:
+            cod_map.setdefault(cod_func_chave(cod), []).append(irow)
         if nn:
             nome_map[nn] = irow
 
@@ -1087,12 +1293,33 @@ def mesclar_desligados(
         #   (não há matrícula na fatura para comparar, mas o nome deve ser exato)
         irow_matched = None
         if audit_mat:
-            irow_matched = mat_nome_map.get((audit_mat, audit_nn))
-        elif bool(arow.get("_sem_contrato", False)) and audit_nn in nome_map:
-            irow_matched = nome_map[audit_nn]
+            irow_matched = mat_nome_map.get((cod_func_chave(audit_mat), audit_nn))
+            if irow_matched is None:
+                # Nome diferente com a mesma matrícula: só é a mesma pessoa se a
+                # data de admissão bater (mudança de nome). Sem isso, quem casa
+                # e depois é demitida ficaria para sempre sem Dt. Demissão.
+                adm_audit = _fmt_data(arow.get("Dt. Admissão", ""))
+                if adm_audit:
+                    for cand in cod_map.get(cod_func_chave(audit_mat), []):
+                        if _fmt_data(cand.get("admissao", "")) == adm_audit:
+                            irow_matched = cand
+                            break
+        elif bool(arow.get("_sem_contrato", False)):
+            irow_matched = nome_map.get(audit_nn)
+            if irow_matched is None:
+                irow_matched = _inativo_por_nome_estendido(audit_nn, nome_map)
 
         if irow_matched is None:
             continue
+
+        # Chave do próprio inativo casado — quando o nome mudou ela difere da
+        # chave do ativo, e sem registrar as duas o relatório o daria como
+        # "sem correspondência".
+        chave_inativo = (
+            str(irow_matched.get("cod_func", "") or "").strip(),
+            str(irow_matched.get("_norm_func", "") or "").strip(),
+        )
+        matched_norms.add(chave_inativo)
 
         # ── Dt. Demissão ────────────────────────────────────────────────────
         dem_str = str(irow_matched.get("demissao", "") or "").strip()

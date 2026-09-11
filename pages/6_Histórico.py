@@ -7,12 +7,13 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ui import barra_lateral
+from app.grade import grade
 from app import db
 from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
 
 st.set_page_config(page_title="Histórico — Auditoria Unimed", layout="wide")
 barra_lateral()
-st.header("4 · Histórico de Auditorias")
+st.header("6 · Histórico de Auditorias")
 
 periodos = db.listar_periodos()
 
@@ -27,7 +28,7 @@ df_hist = pd.DataFrame([{
     "Processado em":  p["processado_em"],
     "Versões":        p["versoes"],
 } for p in periodos])
-st.dataframe(df_hist, use_container_width=True, hide_index=True)
+grade(df_hist, key="grade_historico", height=280)
 
 st.divider()
 st.subheader("Recarregar auditoria anterior")
@@ -66,4 +67,4 @@ if btn:
             f"Auditoria **{periodo_sel}** carregada · "
             f"processado em {proc} · status: {aprv}"
         )
-        st.info("Navegue para **2 · Auditoria** para ver o resultado.")
+        st.info("Navegue para **5 · Auditoria e Aprovação** para ver o resultado.")

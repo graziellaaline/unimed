@@ -67,6 +67,9 @@ def _escrever_dados(ws, df: pd.DataFrame, colunas: list, cor_status=True):
         fill = PatternFill("solid", fgColor=_COR.get(status, "FFFFFF")) if cor_status else None
         for col_i, col in enumerate(colunas, 1):
             val = row.get(col, "")
+            # NaN/NaT viram célula vazia — openpyxl grava "nan"/quebra o arquivo
+            if val is None or (not isinstance(val, str) and pd.isna(val)):
+                val = ""
             if col in _MOEDA:
                 try:
                     val = float(val)
@@ -77,6 +80,32 @@ def _escrever_dados(ws, df: pd.DataFrame, colunas: list, cor_status=True):
                 c.fill = fill
             c.font = Font(size=10)
             c.alignment = Alignment(vertical="center", wrap_text=True)
+
+
+def _mensalidade_titular(row) -> float:
+    """
+    Valor que vai no bloco de Descrição: só a MENSALIDADE DO TITULAR.
+
+    `Valor Fatura` é o total da linha — soma dependentes e conta médica junto.
+    Quem tem dependente saía com o valor inflado (ex.: `WANDERSON PATRICIO
+    TEIXEIRA`, R$ 896,41 no lugar de R$ 353,09, porque o dependente custa
+    R$ 543,32). O que o outro sistema espera é a mensalidade do titular.
+
+    A auditoria guarda o valor separado em `_vlr_mensalidade_fat`; a tela de
+    exclusões usa o nome bonito `Mensalidade`. `Valor Fatura` só entra como
+    último recurso, para não devolver zero se nenhum dos dois existir.
+    """
+    for campo in ("_vlr_mensalidade_fat", "Mensalidade", "Valor Fatura"):
+        if campo not in row:
+            continue
+        bruto = row.get(campo)
+        if bruto is None or (not isinstance(bruto, str) and pd.isna(bruto)):
+            continue
+        try:
+            return float(bruto)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 def exportar_descricoes_unimed(df: pd.DataFrame, tipo: str, col_data: str) -> str:
@@ -116,10 +145,10 @@ def exportar_descricoes_unimed(df: pd.DataFrame, tipo: str, col_data: str) -> st
             if not nome:
                 continue
             data = str(row.get(col_data, "") or "").strip() if col_data else ""
-            try:
-                valor = float(row.get("Valor Fatura", 0) or 0)
-            except Exception:
-                valor = 0.0
+            # NaN/NaT viram texto "nan"/"NaT" ao passar por str() — some no bloco
+            if data.lower() in ("nan", "nat", "none"):
+                data = ""
+            valor = _mensalidade_titular(row)
             valor_fmt = f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             blocos.append(
                 f"{tipo} DE UNIMED\n"

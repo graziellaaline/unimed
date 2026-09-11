@@ -278,7 +278,8 @@ def analisar_exclusoes(
 
     inicio_comp, fim_comp = _periodo_to_dates(periodo)
     hoje = date.today()
-    data_ref = fim_comp or hoje
+    # Competência ainda em curso não gera atraso: a referência nunca passa de hoje.
+    data_ref = min(fim_comp, hoje) if fim_comp else hoje
 
     registros: list[dict] = []
     processados: set = set()

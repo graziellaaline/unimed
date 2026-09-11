@@ -7,13 +7,14 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral
+from app.ui import barra_lateral, tabela
+from app.grade import grade
 from app import db
 from app.regras import aplicar_regras, calcular_stats
 
 st.set_page_config(page_title="Análises — Unimed", layout="wide")
 barra_lateral()
-st.header("8 · Painel de Análises")
+st.header("7 · Painel de Análises")
 
 # ── Auto-carregar do banco se sessão estiver vazia ────────────────────────────
 if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:
@@ -73,15 +74,20 @@ def _chart_barras(d: pd.DataFrame, grupo: str, cols_valor: list, moeda: bool = F
     if d is None or d.empty:
         return None
     d = d.head(top).copy()
-    ordem = d[grupo].astype(str).tolist()
+    # No Vega-Lite o "." no nome do campo significa caminho aninhado — com
+    # "Contrato Adm." o gráfico inteiro virava uma única barra "undefined".
+    grupo_eixo = grupo.replace(".", "")
+    if grupo_eixo != grupo:
+        d = d.rename(columns={grupo: grupo_eixo})
+    ordem = d[grupo_eixo].astype(str).tolist()
     fmt = _brl if moeda else _num
-    dl = d.melt(id_vars=[grupo], value_vars=cols_valor, var_name="Série", value_name="Valor")
+    dl = d.melt(id_vars=[grupo_eixo], value_vars=cols_valor, var_name="Série", value_name="Valor")
     dl["Rótulo"] = dl["Valor"].apply(fmt)
     multi = len(cols_valor) > 1
     altura = max(260, 30 * len(d) * (len(cols_valor) if multi else 1))
 
     base = alt.Chart(dl).encode(
-        y=alt.Y(f"{grupo}:N", sort=ordem, title=None),
+        y=alt.Y(f"{grupo_eixo}:N", sort=ordem, title=None),
         x=alt.X("Valor:Q", title=None),
     )
     if multi:
@@ -266,11 +272,13 @@ if df_det.empty:
     st.caption("Nenhum registro com desvio de valor neste período. 🎉")
 else:
     df_det_show = df_det.drop(columns=["_total_desvio"]).head(20).copy()
-    for col in ["Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
-                "Dif. Contrato x Compra", "Dif. Fatura x Compra"]:
-        if col in df_det_show.columns:
-            df_det_show[col] = df_det_show[col].apply(lambda v: _brl(v) if pd.notna(v) else "—")
-    st.dataframe(df_det_show, width="stretch", hide_index=True, height=420)
+    _moeda_det = tuple(c for c in ["Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura",
+                                   "Valor Compra Total", "Dif. Contrato x Compra",
+                                   "Dif. Fatura x Compra"] if c in df_det_show.columns)
+    for col in _moeda_det:
+        df_det_show[col] = pd.to_numeric(df_det_show[col], errors="coerce")
+    grade(df_det_show.reset_index(drop=True), key="grade_desvios",
+          height=420, colunas_moeda=_moeda_det, larguras={"Funcionário": 220})
     st.caption(f"Mostrando os {len(df_det_show)} maiores desvios de {len(df_det)} registro(s) divergente(s) no total.")
 
 st.divider()

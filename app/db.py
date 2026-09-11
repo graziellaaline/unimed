@@ -122,20 +122,38 @@ def carregar_auditoria(periodo: str, cliente: str = "") -> tuple:
     return df, stats, meta
 
 
+def _chave_periodo(periodo: str) -> tuple:
+    """(ano, mês) para ordenação cronológica. Períodos inválidos vão para o fim."""
+    try:
+        mes_txt, ano_txt = str(periodo or "").strip().split("/", 1)
+        mes, ano = int(mes_txt), int(ano_txt)
+        if ano < 100:
+            ano += 2000
+        return (ano, mes)
+    except Exception:
+        return (-1, -1)
+
+
 def listar_periodos(cliente: str = "") -> list:
     con = _conn()
     cur = con.cursor()
     cur.execute(
         "SELECT MAX(id) AS id, periodo, cliente, MAX(processado_em) AS ultimo, COUNT(*) AS versoes "
         "FROM auditorias WHERE (cliente=? OR ?='') "
-        "GROUP BY periodo, cliente ORDER BY periodo DESC, MAX(processado_em) DESC",
+        "GROUP BY periodo, cliente",
         (cliente, cliente)
     )
     rows = cur.fetchall()
     con.close()
-    return [{"id": r[0], "periodo": r[1], "cliente": r[2],
-             "processado_em": (r[3] or "")[:16].replace("T", " "),
-             "versoes": r[4]} for r in rows]
+    itens = [{"id": r[0], "periodo": r[1], "cliente": r[2],
+              "processado_em": (r[3] or "")[:16].replace("T", " "),
+              "versoes": r[4]} for r in rows]
+    # Ordenação cronológica feita em Python: 'periodo' é texto MM/AAAA, então
+    # ORDER BY no SQL colocava 12/2025 na frente de 08/2026 (compara o mês
+    # primeiro) — e as telas usam o primeiro item como "auditoria mais recente".
+    itens.sort(key=lambda p: (_chave_periodo(p["periodo"]), p["processado_em"]),
+               reverse=True)
+    return itens
 
 
 def aprovar_auditoria(auditoria_id: int):

@@ -6,19 +6,42 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral
+from app.ui import barra_lateral, tabela
+from app.grade import grade
 from app import db
-from app.processamento import _norm
+from app.processamento import _norm, indice_titulares, localizar_titular
 from app.exportacao import exportar_descricoes_unimed, exportar_excel_exclusoes
 
 st.set_page_config(page_title="Exclusões do Mês — Unimed", layout="wide")
 barra_lateral()
 st.header("3 · Exclusões do Mês de Referência")
 
-# ── Verificar auditoria carregada ─────────────────────────────────────────────
+# ── Auto-carregar auditoria (mesmo comportamento das demais abas) ─────────────
 if "df_audit" not in st.session_state or st.session_state["df_audit"] is None:
-    st.warning("Nenhuma auditoria carregada. Acesse **1 · Importação**.")
-    st.stop()
+    from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
+
+    _ults = db.listar_periodos()
+    _ult  = _ults[0] if _ults else None
+    _df   = None
+    if _ult:
+        with st.spinner(f"Carregando auditoria {_ult['periodo']}…"):
+            _df, _stats, _meta = db.carregar_auditoria(_ult["periodo"], _ult["cliente"])
+    if _df is not None and not _df.empty:
+        _df  = aplicar_regras(_df)
+        _aid = (_meta or {}).get("id") or _ult.get("id")
+        st.session_state.update({
+            "df_audit":     _df,
+            "df_inc":       identificar_incluidos_mes(_df, _ult["periodo"]),
+            "stats":        calcular_stats(_df),
+            "periodo":      _ult["periodo"],
+            "cliente":      _ult["cliente"],
+            "auditoria_id": _aid,
+            "arquivos_fontes": db.carregar_arquivos_auditoria(_aid) if _aid else {},
+        })
+        st.rerun()
+    else:
+        st.warning("Nenhuma auditoria carregada. Acesse **1 · Importação**.")
+        st.stop()
 
 df_atual  = st.session_state["df_audit"]
 periodo   = st.session_state.get("periodo", "")
@@ -74,17 +97,27 @@ if fat_ant.empty:
     st.info(f"Não há titulares na fatura registrados para {periodo_ant_sel}.")
     st.stop()
 
-nomes_atuais = {_norm_nome(f) for f in fat_atual["Funcionário"].dropna()}
+# Quem do mês anterior não foi localizado no mês atual = exclusão.
+# A busca casa por matrícula (com nome ou admissão confirmando) antes do nome,
+# senão quem muda de nome — casamento, p. ex. — viraria exclusão todo mês.
+_idx_atual = indice_titulares(fat_atual)
+_achados   = [localizar_titular(r, _idx_atual) for _, r in fat_ant.iterrows()]
 
-mask   = fat_ant["Funcionário"].apply(lambda f: _norm_nome(f) not in nomes_atuais)
+mask   = pd.Series([not ok for ok, _ in _achados], index=fat_ant.index)
 df_exc = fat_ant[mask].copy()
 
-# Os valores em fat_ant são da fatura ANTERIOR (mês em que a pessoa ainda
-# constava). Como por definição ninguém desta lista está na fatura ATUAL,
-# zera os valores monetários para não dar a impressão de cobrança vigente.
-for _col_zerar in ["Valor Fatura", "_vlr_mensalidade_fat", "_vlr_dependente_fat", "_vlr_copart_fat"]:
-    if _col_zerar in df_exc.columns:
-        df_exc[_col_zerar] = 0.0
+# Mesma matrícula com nome diferente: não é exclusão, é troca de nome
+_renomeados = [
+    (str(r.get("Funcionário", "")), reg["nome"])
+    for (ok, reg), (_, r) in zip(_achados, fat_ant.iterrows())
+    if ok and reg and _norm_nome(reg["nome"]) != _norm_nome(r.get("Funcionário", ""))
+]
+
+# Os valores desta lista são da fatura de `periodo_ant_sel` — último mês em que
+# a pessoa foi cobrada. Ficam preservados (antes eram zerados, o que deixava a
+# tabela inteira em R$ 0,00 e a coluna de composição sempre "—"): é justamente
+# o que estava sendo cobrado que decide se cabe estorno. Os cabeçalhos abaixo
+# levam o mês de referência para não parecer cobrança do mês atual.
 
 # ── Enriquecer excluídos com dados dos inativos (para sem_contrato) ───────────
 # Funcionários que aparecem só na fatura (_sem_contrato) têm empresa/dept vazios.
@@ -179,6 +212,22 @@ if not _df_inat.empty and not df_exc.empty:
                 if _val and _val.lower() not in ("nan", "none") and not _cur:
                     df_exc.at[_idx, _ca] = _val
 
+# ── Separar o residual de conta médica ───────────────────────────────────────
+# Quem constava na fatura anterior só com coparticipação não era titular ativo
+# do plano naquele mês: é cobrança de atendimento já ocorrido, comum em quem já
+# estava desligado. Sumir no mês seguinte é o esperado, não é exclusão.
+def _so_conta_medica(row) -> bool:
+    return (float(row.get("_vlr_mensalidade_fat", 0) or 0) <= 0
+            and float(row.get("_vlr_dependente_fat", 0) or 0) <= 0
+            and float(row.get("_vlr_copart_fat", 0) or 0) > 0)
+
+
+df_copart = pd.DataFrame()
+if not df_exc.empty:
+    _mask_cm  = df_exc.apply(_so_conta_medica, axis=1)
+    df_copart = df_exc[_mask_cm].copy()
+    df_exc    = df_exc[~_mask_cm].copy()
+
 # ── Resumo ────────────────────────────────────────────────────────────────────
 st.divider()
 
@@ -188,6 +237,44 @@ m2.metric(f"Titulares em {periodo}",          len(fat_atual))
 m3.metric("Exclusões identificadas",           len(df_exc),
           delta=f"-{len(df_exc)}" if len(df_exc) else None,
           delta_color="inverse")
+
+if _renomeados:
+    with st.expander(
+        f"✍️ {len(_renomeados)} titular(es) mudaram de nome entre {periodo_ant_sel} e {periodo} "
+        "— não são exclusões",
+        expanded=False,
+    ):
+        st.caption(
+            "Mesma matrícula e mesma data de admissão, nome diferente na fatura "
+            "(casamento, correção de cadastro). Continuam ativos."
+        )
+        tabela(
+            pd.DataFrame(_renomeados, columns=[f"Nome em {periodo_ant_sel}", f"Nome em {periodo}"]),
+            use_container_width=True, hide_index=True,
+        )
+
+if not df_copart.empty:
+    with st.expander(
+        f"🩺 {len(df_copart)} pessoa(s) tinham só conta médica em {periodo_ant_sel} "
+        "— não são exclusões de plano",
+        expanded=False,
+    ):
+        st.caption(
+            "Não havia mensalidade na fatura, só coparticipação (atendimento já realizado) "
+            "— normalmente resíduo de quem já estava desligado. Não sair no mês seguinte "
+            "é o esperado; a cobrança de uso não é estornável."
+        )
+        _cols_cm = [c for c in ["Funcionário", "Empresa", "Departamento", "Contrato Adm.",
+                                "Dt. Admissão", "Dt. Demissão", "_vlr_copart_fat"]
+                    if c in df_copart.columns]
+        _tab_cm = df_copart[_cols_cm].copy().reset_index(drop=True)
+        _tab_cm = _tab_cm.rename(columns={"_vlr_copart_fat": f"Conta médica ({periodo_ant_sel})"})
+        _col_cm = f"Conta médica ({periodo_ant_sel})"
+        if _col_cm in _tab_cm.columns:
+            _tab_cm[_col_cm] = _tab_cm[_col_cm].apply(
+                lambda v: f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+        tabela(_tab_cm, use_container_width=True, hide_index=True)
 
 st.divider()
 
@@ -269,11 +356,37 @@ def _brl(v):
     except Exception:
         return "—"
 
-for _col_moeda in ["Mensalidade", "Dependentes", "Coparticipação", "Valor Fatura"]:
-    if _col_moeda in df_tab.columns:
-        df_tab[_col_moeda] = df_tab[_col_moeda].apply(_brl)
+_MOEDA_EXC = tuple(c for c in ["Mensalidade", "Dependentes", "Coparticipação", "Valor Fatura"]
+                   if c in df_tab.columns)
+for _col_moeda in _MOEDA_EXC:
+    df_tab[_col_moeda] = pd.to_numeric(df_tab[_col_moeda], errors="coerce")
 
-st.dataframe(df_tab, use_container_width=True, hide_index=True)
+# Converter colunas de data (texto dd/mm/aaaa → data real) para a ordenação por
+# cabeçalho funcionar cronologicamente — como texto, "31/07/2025" vinha antes de
+# "02/07/2026" (ordena pelo dia). df_tab_excel acima fica com o texto original.
+_DATE_COLS_EXC = tuple(c for c in ["Dt. Admissão", "Dt. Demissão"] if c in df_tab.columns)
+for _dc in _DATE_COLS_EXC:
+    _clean = (df_tab[_dc].astype(str).str.strip()
+              .replace({"nan": "", "None": "", "NaT": "", "none": "", "NAT": ""}))
+    df_tab[_dc] = pd.to_datetime(_clean, dayfirst=True, errors="coerce")
+
+# Deixa explícito no cabeçalho que os valores são da fatura do mês anterior
+df_tab = df_tab.rename(columns={c: f"{c} ({periodo_ant_sel})" for c in _MOEDA_EXC})
+_MOEDA_EXC = tuple(f"{c} ({periodo_ant_sel})" for c in _MOEDA_EXC)
+
+st.caption(
+    f"Os valores abaixo são os da fatura de **{periodo_ant_sel}** — último mês em que "
+    f"estas pessoas foram cobradas. Em **{periodo}** não há cobrança para elas. "
+    "Clique no funil do cabeçalho para filtrar ou ordenar a coluna."
+)
+_resp_exc = grade(
+    df_tab.reset_index(drop=True),
+    key="grade_exclusoes",
+    height=480,
+    colunas_moeda=_MOEDA_EXC,
+    colunas_data=_DATE_COLS_EXC,
+    larguras={"Funcionário": 220},
+)
 
 excel_bytes_exc = exportar_excel_exclusoes(df_tab_excel, periodo)
 st.download_button(

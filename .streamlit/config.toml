@@ -3,3 +3,71 @@ toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
+
+# ---------------------------------------------------------------------------
+# Identidade visual — mesma do "Controle de EPIs e Uniformes" (Setrata).
+# Regra da casa herdada de lá: toda cor sai de um token. Superfícies claras e
+# sólidas, separação por LINHA em vez de sombra, e uma cor de destaque só — o
+# azul-marinho da marca — reservada para ação, foco e seleção. Verde, âmbar e
+# vermelho existem como ESTADO, nunca como enfeite.
+# ---------------------------------------------------------------------------
+[theme]
+base = "light"
+font = "\"Calibri Light\", Calibri, \"Segoe UI\", system-ui, -apple-system, sans-serif"
+baseFontSize = 14
+baseRadius = "8px"
+buttonRadius = "8px"
+showWidgetBorder = true
+showSidebarBorder = false
+
+primaryColor            = "#01204D"   # --marca   (bg-deep)
+backgroundColor         = "#F7F8FA"   # --sup-0
+secondaryBackgroundColor = "#FFFFFF"  # --sup-1
+textColor               = "#0F172A"   # --tinta
+linkColor               = "#2E7DD1"   # --bright
+borderColor             = "#E3E8EF"   # --linha
+dataframeBorderColor    = "#E3E8EF"
+dataframeHeaderBackgroundColor = "#F1F4F8"   # --sup-2
+
+greenColor  = "#2E7D32"   # --bom
+redColor    = "#C62828"   # --risco
+orangeColor = "#B45309"   # --atencao
+blueColor   = "#2E7DD1"   # --info
+greenBackgroundColor  = "#ECF5ED"   # --bom-fraco
+redBackgroundColor    = "#FBEDED"   # --risco-fraco
+orangeBackgroundColor = "#FDF3E7"   # --atencao-fraco
+blueBackgroundColor   = "#EAF2FB"   # --info-fraco
+
+# A chapa do menu é azul-marinho nos dois temas (no sistema de EPIs o
+# --chapa não é redefinido no bloco dark).
+[theme.sidebar]
+backgroundColor          = "#01204D"
+secondaryBackgroundColor = "#0A3161"
+textColor                = "#FFFFFF"
+primaryColor             = "#529E2B"   # --accent (verde do item ativo)
+borderColor              = "#1A3A5C"   # --royal
+linkColor                = "#8FBEE8"
+showWidgetBorder         = false
+
+[theme.dark]
+backgroundColor          = "#12161C"   # --sup-0 dark
+secondaryBackgroundColor = "#1A1F27"   # --sup-1 dark
+textColor                = "#E7EDF4"   # --tinta dark
+primaryColor             = "#6FA8DC"   # --marca dark
+linkColor                = "#6FA8DC"
+borderColor              = "#2C3644"   # --linha dark
+dataframeBorderColor     = "#2C3644"
+dataframeHeaderBackgroundColor = "#222833"   # --sup-2 dark
+
+greenColor  = "#6DBE73"
+redColor    = "#E97070"
+orangeColor = "#E0A030"
+blueColor   = "#6FA8DC"
+
+[theme.dark.sidebar]
+backgroundColor          = "#01204D"
+secondaryBackgroundColor = "#0A3161"
+textColor                = "#FFFFFF"
+primaryColor             = "#529E2B"
+borderColor              = "#1A3A5C"
+linkColor                = "#8FBEE8"

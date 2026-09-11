@@ -10,13 +10,15 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral
+from app.ui import barra_lateral, tabela
+from app.grade import grade
+from st_aggrid import JsCode
 from app import db
 from app.exclusoes_indevidas import ler_desligados
 
 st.set_page_config(page_title="Exclusões Indevidas — Unimed", layout="wide")
 barra_lateral()
-st.header("6 · Auditoria de Exclusões Indevidas")
+st.header("4 · Auditoria de Exclusões Indevidas")
 st.caption(
     "Cruza a **planilha de desligados** com a **fatura** e a **compra** — "
     "identifica quem ainda está ativo indevidamente e calcula o prejuízo estimado."
@@ -336,14 +338,22 @@ else:
 # ── Mesclar dados dos inativos na auditoria da sessão ────────────────────────
 # Atualiza df_audit em memória (Dt. Demissão + campos ausentes) para que todas
 # as abas reflitam os dados dos inativos sem reprocessamento completo.
-if not _df_desl_sessao.empty if _df_desl_sessao is not None else False:
+# Fonte da mesclagem = a mesma que gerou `desl_rows`: o upload manual quando há
+# um, senão o df da sessão/banco (que já vem no formato de ler_contratos).
+_usar_df_sessao = (
+    not _usando_upload_manual
+    and _df_desl_sessao is not None
+    and not _df_desl_sessao.empty
+    and "_norm_func" in _df_desl_sessao.columns
+)
+
+if desl_rows:
     from app.processamento import mesclar_desligados
 
-    # Se já está em formato df_cont usa direto; senão converte para df_cont mínimo
-    if _eh_formato_cont if "_eh_formato_cont" in dir() else ("_norm_func" in (_df_desl_sessao or pd.DataFrame()).columns):
+    if _usar_df_sessao:
         _df_para_merge_cont = _df_desl_sessao
     else:
-        # Formato legado → converte
+        # Upload manual / formato legado → converte para o formato de contratos
         _df_para_merge_cont = pd.DataFrame([{
             "cod_func":    d.get("mat", ""),
             "_norm_func":  d["_norm"],
@@ -382,7 +392,10 @@ st.divider()
 
 # ── Cruzar com fatura / compra ────────────────────────────────────────────────
 inicio_comp, fim_comp = _periodo_dates(periodo)
-data_ref = fim_comp or date.today()
+# Auditar um mês ainda em curso não pode fabricar atraso: se a competência
+# termina no futuro, a referência é hoje. Sem isso, quem foi demitido no mês
+# corrente já nascia "fora do prazo" contra uma data que nem chegou.
+data_ref = min(fim_comp, date.today()) if fim_comp else date.today()
 
 def _tipo_cobranca(vlr_mens: float, vlr_dep: float, vlr_copart: float) -> str:
     partes = []
@@ -461,7 +474,16 @@ for d in desl_rows:
         if inicio_indev <= fim_comp:
             dias_indev = max(0, (fim_comp - max(inicio_indev, inicio_comp)).days + 1)
 
-    vlr_prej = round(vlr_fatura * dias_indev / 30, 2) if dias_indev else vlr_fatura
+    # Sem data de demissão não dá para ratear — assume a fatura cheia (é o que o
+    # aviso de "sem data" explica). Com data e zero dia indevido no período, a
+    # cobrança do mês é legítima: prejuízo 0 (antes somava a fatura cheia e
+    # inflava o KPI de prejuízo estimado).
+    if dias_indev:
+        vlr_prej = round(vlr_fatura * dias_indev / 30, 2)
+    elif dt_dem is None:
+        vlr_prej = vlr_fatura
+    else:
+        vlr_prej = 0.0
 
     # Status: se apenas Conta médica está sendo cobrada → "Excluído - com cobrança"
     _so_copart = fat["vlr_copart"] > 0 and fat["vlr_mens"] == 0 and fat["vlr_dep"] == 0
@@ -501,9 +523,19 @@ if not registros:
     )
     st.stop()
 
-df_res = pd.DataFrame(registros).sort_values(
-    ["Status", "Valor Estimado Prejuízo"], ascending=[True, False]
-).reset_index(drop=True)
+# Ordem de gravidade explícita (não depende do emoji do Status):
+# 1º Cobrança Indevida  →  2º Fora do Prazo  →  3º Excluído c/ cobrança médica
+_PRIORIDADE_STATUS = {
+    "🚨 COBRANÇA INDEVIDA":            1,
+    "⚠️ EXCLUSÃO FORA DO PRAZO":       2,
+    "🔶 EXCLUÍDO — COM COBRANÇA MÉDICA": 3,
+}
+df_res = pd.DataFrame(registros)
+df_res["_ord"] = df_res["Status"].map(_PRIORIDADE_STATUS).fillna(9).astype(int)
+df_res = (df_res
+          .sort_values(["_ord", "Valor Estimado Prejuízo"], ascending=[True, False])
+          .drop(columns=["_ord"])
+          .reset_index(drop=True))
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
 st.subheader(f"Resultado — {periodo}")
@@ -544,7 +576,7 @@ with g1:
                    Prejuízo=("Valor Estimado Prejuízo", "sum"))
               .reset_index().sort_values("Casos", ascending=False).head(10))
         rk["Prejuízo"] = rk["Prejuízo"].apply(_brl)
-        st.dataframe(rk, use_container_width=True, hide_index=True)
+        tabela(rk, use_container_width=True, hide_index=True)
     else:
         st.caption("Sem dados de contrato.")
 
@@ -557,55 +589,45 @@ with g2:
                     Prejuízo=("Valor Estimado Prejuízo", "sum"))
                .reset_index().sort_values("Casos", ascending=False).head(10))
         rk2["Prejuízo"] = rk2["Prejuízo"].apply(_brl)
-        st.dataframe(rk2, use_container_width=True, hide_index=True)
+        tabela(rk2, use_container_width=True, hide_index=True)
     else:
         st.caption("Sem dados de departamento.")
 
 st.divider()
 
-# ── Filtros ───────────────────────────────────────────────────────────────────
-with st.expander("🔍 Filtros", expanded=True):
-    f1, f2, f3, f4 = st.columns(4)
-    f_status   = f1.selectbox("Status", ["Todos"] + sorted(df_res["Status"].unique().tolist()))
-    f_empresa  = f2.selectbox("Empresa",       ["Todos"] + sorted([v for v in df_res["Empresa"].dropna().unique() if str(v).strip()]))
-    f_contrato = f3.selectbox("Contrato Adm.", ["Todos"] + sorted([v for v in df_res["Contrato Adm."].dropna().unique() if str(v).strip()]))
-    f_nome     = f4.text_input("Funcionário (parte do nome)")
-
-df_f = df_res.copy()
-if f_status   != "Todos": df_f = df_f[df_f["Status"]         == f_status]
-if f_empresa  != "Todos": df_f = df_f[df_f["Empresa"]        == f_empresa]
-if f_contrato != "Todos": df_f = df_f[df_f["Contrato Adm."]  == f_contrato]
-if f_nome:                 df_f = df_f[df_f["Funcionário"].str.contains(f_nome, case=False, na=False)]
-
-st.caption(f"**{len(df_f)}** caso(s) exibido(s)")
-
 # ── Tabela ────────────────────────────────────────────────────────────────────
-df_tab = df_f.copy()
-for col in ["Valor Fatura Mensal", "Valor Estimado Prejuízo"]:
-    df_tab[col] = df_tab[col].apply(lambda v: _brl(v) if pd.notna(v) else "—")
+# Filtros ficam no funil do cabeçalho de cada coluna e rodam no navegador.
+df_tab = df_res.copy().reset_index(drop=True)
 
-CORES = {
-    "🚨 COBRANÇA INDEVIDA":      "#f8d7da",
-    "⚠️ EXCLUSÃO FORA DO PRAZO": "#ffd6a5",
+MOEDA = tuple(c for c in ["Valor Fatura Mensal", "Valor Estimado Prejuízo"] if c in df_tab.columns)
+for col in MOEDA:
+    df_tab[col] = pd.to_numeric(df_tab[col], errors="coerce")
+
+DATAS = tuple(c for c in ["Dt. Demissão", "Último Dia de Cobertura", "Prazo Limite Exclusão"]
+              if c in df_tab.columns)
+
+_COR_STATUS = JsCode("""
+function (p) {
+    if (!p.data) { return null; }
+    if (p.data['Status'] && p.data['Status'].indexOf('INDEVIDA') >= 0) { return { background: '#FBEDED' }; }
+    if (p.data['Status'] && p.data['Status'].indexOf('FORA DO PRAZO') >= 0) { return { background: '#FDF3E7' }; }
+    return null;
 }
+""")
 
-def _cor(row):
-    cor = CORES.get(row.get("Status", ""), "")
-    return [f"background-color:{cor}" if cor else ""] * len(row)
+st.caption("Clique no funil do cabeçalho para filtrar ou ordenar a coluna · duplo clique numa célula copia o conteúdo.")
 
-_date_col = st.column_config.DateColumn(format="DD/MM/YYYY")
-
-st.dataframe(
-    df_tab.style.apply(_cor, axis=1),
-    use_container_width=True,
+_resp = grade(
+    df_tab,
+    key="grade_exclusoes_indevidas",
     height=500,
-    hide_index=True,
-    column_config={
-        "Dt. Demissão":            _date_col,
-        "Último Dia de Cobertura": _date_col,
-        "Prazo Limite Exclusão":   _date_col,
-    },
+    colunas_moeda=MOEDA,
+    colunas_data=DATAS,
+    larguras={"Funcionário": 220},
+    cor_linha=_COR_STATUS,
 )
+df_f = pd.DataFrame(_resp["data"]) if _resp is not None else df_tab
+st.caption(f"**{len(df_f)}** caso(s) exibido(s) de {len(df_tab)}.")
 
 # ── Exportação ────────────────────────────────────────────────────────────────
 st.divider()

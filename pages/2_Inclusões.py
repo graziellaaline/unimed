@@ -8,13 +8,15 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ui import barra_lateral
+from app.grade import grade
+from app.processamento import indice_titulares, localizar_titular
 from app.exportacao import exportar_excel, exportar_descricoes_unimed
 from app.regras import identificar_incluidos_mes, aplicar_regras, calcular_stats
 from app import db
 
 st.set_page_config(page_title="Inclusões do Mês — Unimed", layout="wide")
 barra_lateral()
-st.header("3 · Inclusões no Mês de Referência")
+st.header("2 · Inclusões no Mês de Referência")
 
 
 def _norm(s) -> str:
@@ -84,15 +86,15 @@ if periodo_ant:
     if _df_ant is not None and not _df_ant.empty:
         _df_ant = aplicar_regras(_df_ant)
         # Titulares ativos na fatura do período anterior
-        nomes_ant = {
-            _norm(str(n or ""))
-            for n in _df_ant.loc[_df_ant["_na_fatura"].astype(bool), "Funcionário"]
-        }
+        _idx_ant = indice_titulares(_df_ant[_df_ant["_na_fatura"].astype(bool)])
         # Titulares ativos na fatura do período atual
         df_fat_atual = df[df["_na_fatura"].astype(bool)].copy()
-        # Novos: presentes agora mas ausentes no período anterior
-        mascara_novo = df_fat_atual["Funcionário"].apply(
-            lambda n: _norm(str(n or "")) not in nomes_ant
+        # Novos: presentes agora mas ausentes no período anterior. A busca casa
+        # por matrícula (com nome ou admissão confirmando) antes do nome — sem
+        # isso, quem muda de nome entra como "novo titular" todo mês.
+        mascara_novo = pd.Series(
+            [not localizar_titular(r, _idx_ant)[0] for _, r in df_fat_atual.iterrows()],
+            index=df_fat_atual.index,
         )
         df_novos_vs_ant = df_fat_atual[mascara_novo].copy()
         info_periodo_ant = periodo_ant
@@ -123,6 +125,15 @@ else:
 
 df_inc_combined = pd.concat([df_inc_fat, df_extra], ignore_index=True)
 
+# Quem já está desligado não é inclusão — é cobrança de quem saiu. Aparecia
+# aqui como "novo titular" só porque não constava na fatura do mês anterior.
+# O lugar dessa gente é a tela 4 · Exclusões Indevidas.
+_desligados_na_lista = pd.DataFrame()
+if not df_inc_combined.empty and "_desligado" in df_inc_combined.columns:
+    _mask_desl = df_inc_combined["_desligado"].astype(bool)
+    _desligados_na_lista = df_inc_combined[_mask_desl].copy()
+    df_inc_combined = df_inc_combined[~_mask_desl].copy()
+
 # ── Exibição ─────────────────────────────────────────────────────────────────
 total = len(df_inc_combined)
 n_c1  = len(df_inc_fat)
@@ -136,6 +147,16 @@ if df_inc_combined.empty:
     st.stop()
 
 st.success(f"**{total}** inclusão(ões) identificada(s) em {periodo}")
+
+if not _desligados_na_lista.empty:
+    _nomes = ", ".join(f"**{n}**" for n in _desligados_na_lista["Funcionário"].head(6))
+    if len(_desligados_na_lista) > 6:
+        _nomes += f" e mais {len(_desligados_na_lista) - 6}"
+    st.warning(
+        f"{len(_desligados_na_lista)} pessoa(s) fora desta lista por já estarem "
+        f"**desligadas** — não são inclusões, são cobranças de quem saiu: {_nomes}. "
+        "Confira em **4 · Auditoria Exclusões Indevidas**."
+    )
 
 c1, c2 = st.columns(2)
 with c1:
@@ -152,57 +173,48 @@ with c2:
 
 st.divider()
 
-# ── Filtros ──────────────────────────────────────────────────────────────────
-with st.expander("🔍 Filtros", expanded=True):
-    f1, f2, f3, f4 = st.columns(4)
-
-    opts_empresa = ["Todos"] + sorted([
-        v for v in df_inc_combined.get("Empresa", pd.Series()).dropna().unique()
-        if str(v).strip()
-    ])
-    opts_dep = ["Todos"] + sorted([
-        v for v in df_inc_combined.get("Departamento", pd.Series()).dropna().unique()
-        if str(v).strip()
-    ])
-    opts_cont = ["Todos"] + sorted([
-        v for v in df_inc_combined.get("Contrato Adm.", pd.Series()).dropna().unique()
-        if str(v).strip()
-    ])
-    opts_orig = ["Todos"] + sorted(df_inc_combined["Origem"].dropna().unique().tolist())
-
-    f_empresa  = f1.selectbox("Empresa", opts_empresa)
-    f_dep      = f2.selectbox("Departamento", opts_dep)
-    f_contrato = f3.selectbox("Contrato Adm.", opts_cont)
-    f_orig     = f4.selectbox("Origem", opts_orig)
-
-df_f = df_inc_combined.copy()
-if f_empresa  != "Todos": df_f = df_f[df_f.get("Empresa", pd.Series()) == f_empresa]
-if f_dep      != "Todos": df_f = df_f[df_f.get("Departamento", pd.Series()) == f_dep]
-if f_contrato != "Todos": df_f = df_f[df_f.get("Contrato Adm.", pd.Series()) == f_contrato]
-if f_orig     != "Todos": df_f = df_f[df_f["Origem"] == f_orig]
-
-st.caption(f"**{len(df_f)}** inclusão(ões) exibida(s)")
-
 # ── Tabela ────────────────────────────────────────────────────────────────────
+# Os filtros ficam no funil do cabeçalho de cada coluna (estilo Excel) e rodam
+# no navegador — não há mais recarga da página a cada seleção.
 COLS = [
     "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
     "Dt. Admissão", "Data Inclusão",
     "Valor Fatura", "Valor Contrato", "Tem Direito", "Origem",
 ]
-cols_ok = [c for c in COLS if c in df_f.columns]
-df_tab = df_f[cols_ok].copy()
+cols_ok = [c for c in COLS if c in df_inc_combined.columns]
+df_tab = df_inc_combined[cols_ok].copy().reset_index(drop=True)
 
-def _brl(v):
-    try:
-        return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "—"
+MOEDA = tuple(c for c in ["Valor Fatura", "Valor Contrato"] if c in df_tab.columns)
+for col in MOEDA:
+    df_tab[col] = pd.to_numeric(df_tab[col], errors="coerce")
 
-for col in ["Valor Fatura", "Valor Contrato"]:
-    if col in df_tab.columns:
-        df_tab[col] = df_tab[col].apply(_brl)
+# Datas como texto não ordenam por ordem cronológica ao clicar no cabeçalho —
+# converter para data real (mantém dd/mm/aaaa na exibição).
+DATAS = tuple(c for c in ["Dt. Admissão", "Data Inclusão"] if c in df_tab.columns)
+for _dc in DATAS:
+    _clean = (df_tab[_dc].astype(str).str.strip()
+              .replace({"nan": "", "None": "", "NaT": "", "none": "", "NAT": ""}))
+    df_tab[_dc] = pd.to_datetime(_clean, dayfirst=True, errors="coerce")
 
-st.dataframe(df_tab, use_container_width=True, hide_index=True, height=480)
+st.caption("Clique no funil do cabeçalho para filtrar ou ordenar a coluna · duplo clique numa célula copia o conteúdo.")
+
+_resp = grade(
+    df_tab,
+    key="grade_inclusoes",
+    height=480,
+    colunas_moeda=MOEDA,
+    colunas_data=DATAS,
+    larguras={"Funcionário": 220},
+)
+_visiveis = pd.DataFrame(_resp["data"]) if _resp is not None else pd.DataFrame()
+st.caption(f"**{len(_visiveis)}** inclusão(ões) exibida(s) de {len(df_tab)}.")
+
+# O texto para colar acompanha o que está filtrado na tela — mas precisa das
+# colunas originais, que a grade não carrega.
+if "Funcionário" in _visiveis.columns and len(_visiveis) < len(df_tab):
+    df_f = df_inc_combined[df_inc_combined["Funcionário"].isin(_visiveis["Funcionário"])]
+else:
+    df_f = df_inc_combined
 
 # ── Observação ────────────────────────────────────────────────────────────────
 st.divider()
