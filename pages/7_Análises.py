@@ -7,12 +7,12 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral, tabela
+from app.ui import ICONE, AZUL, SERIES, TEXTO, barra_lateral, tabela
 from app.grade import grade
 from app import db
 from app.regras import aplicar_regras, calcular_stats
 
-st.set_page_config(page_title="Análises — Unimed", layout="wide")
+st.set_page_config(page_title="Análises — Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("7 · Painel de Análises")
 
@@ -92,14 +92,15 @@ def _chart_barras(d: pd.DataFrame, grupo: str, cols_valor: list, moeda: bool = F
     )
     if multi:
         base = base.encode(
-            color=alt.Color("Série:N", title=None),
+            color=alt.Color("Série:N", title=None,
+                            scale=alt.Scale(range=SERIES)),
             yOffset=alt.YOffset("Série:N"),
         )
         bars = base.mark_bar()
     else:
-        bars = base.mark_bar(color="#1565c0")
+        bars = base.mark_bar(color=AZUL)
 
-    text = base.mark_text(align="left", dx=3, fontSize=10, color="#333").encode(text="Rótulo:N")
+    text = base.mark_text(align="left", dx=3, fontSize=11).encode(text="Rótulo:N", color=alt.value(TEXTO))
 
     return (bars + text).properties(height=altura)
 
@@ -366,10 +367,11 @@ else:
             base = alt.Chart(dl).encode(
                 x=alt.X("Período:N", sort=d["Período"].tolist(), title=None),
                 y=alt.Y("Valor:Q", title=None),
-                color=alt.Color("Série:N", title=None) if len(cols_valor) > 1 else alt.value("#1565c0"),
+                color=(alt.Color("Série:N", title=None, scale=alt.Scale(range=SERIES))
+                       if len(cols_valor) > 1 else alt.value(AZUL)),
             )
             linhas = base.mark_line(point=True)
-            texto = base.mark_text(align="center", dy=-10, fontSize=10, color="#333").encode(text="Rótulo:N")
+            texto = base.mark_text(align="center", dy=-10, fontSize=11).encode(text="Rótulo:N", color=alt.value(TEXTO))
             return (linhas + texto).properties(height=300)
 
         e1, e2 = st.columns(2)

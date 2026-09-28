@@ -15,12 +15,12 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral
-from app.grade import grade, cor_por_status
+from app.ui import ICONE, barra_lateral
+from app.grade import grade, cor_por_status, recarregar
 from app.exportacao import exportar_excel
 from app import db
 
-st.set_page_config(page_title="Auditoria e Aprovação — Unimed", layout="wide")
+st.set_page_config(page_title="Auditoria e Aprovação — Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("5 · Auditoria e Aprovação")
 
@@ -159,22 +159,25 @@ if _funcs_pend:
 st.divider()
 
 # ── Tabela única ─────────────────────────────────────────────────────────────
+# Ordem FIXA da tabela — esta é a ordem arrumada pela Graziella, promovida
+# para o código para não depender do arquivo de estado. Arrastar o cabeçalho
+# continua funcionando e a nova posição fica gravada em disco; apagar
+# `dados/ordem_colunas_grade_auditoria.json` volta exatamente para esta.
 COLS = [
-    "Funcionário", "Empresa", "Departamento", "Contrato Adm.",
+    "Empresa", "Justificado", "Status", "Funcionário", "Departamento",
+    "Contrato Adm.", "Tipo Inconsistência", "Justificativa",
     "Dt. Admissão", "Dt. Demissão", "Dt. Elegibilidade",
     "Tem Direito", "Está na Fatura", "Está na Compra",
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
-    "Dif. Contrato x Compra", "Dif. Fatura x Compra",
-    "Data Inclusão",
-    "Status", "Justificado", "Tipo Inconsistência", "Inconsistência", "Ação Sugerida",
-    "Justificativa",
+    "Dif. Fatura x Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra",
+    "Data Inclusão", "Inconsistência", "Ação Sugerida",
 ]
 cols_ok = [c for c in COLS if c in df.columns]
 df_tab = df[cols_ok].copy().reset_index(drop=True)
 
 MOEDA = tuple(c for c in [
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
-    "Dif. Contrato x Compra", "Dif. Fatura x Compra",
+    "Dif. Fatura x Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra",
 ] if c in df_tab.columns)
 for c in MOEDA:
     df_tab[c] = pd.to_numeric(df_tab[c], errors="coerce")
@@ -188,9 +191,9 @@ for c in DATAS:
     df_tab[c] = pd.to_datetime(_limpo, dayfirst=True, errors="coerce")
 
 st.caption(
-    "Clique no funil do cabeçalho para filtrar a coluna · duplo clique numa célula "
-    "copia o conteúdo · a coluna **Justificativa** é editável · marque as linhas "
-    "para justificar em lote."
+    "Funil do cabeçalho filtra a coluna · arraste o cabeçalho para reordenar "
+    "(a posição fica gravada) · duplo clique numa célula copia o conteúdo · "
+    "**Justificativa** é editável · o tique do cabeçalho marca e desmarca todos."
 )
 
 resposta = grade(
@@ -254,6 +257,7 @@ with ed2:
             if revertidos:
                 partes.append(f"{revertidos} revertida(s) para pendente")
             st.success(" · ".join(partes) + ".")
+            recarregar("grade_auditoria")
             st.rerun()
         else:
             st.info("Nenhuma alteração na tabela para salvar.")
@@ -300,6 +304,7 @@ with lt2:
             if modelo_lote:
                 db.salvar_justificativa_modelo(cliente, func, desc, just_lote.strip())
         st.success(f"Justificativa aplicada a {len(selecionados)} pendência(s).")
+        recarregar("grade_auditoria")
         st.rerun()
 
 st.divider()
@@ -331,6 +336,7 @@ with ap1:
             qtd, _ = _aplicar_modelos_exatos(salvar_no_banco=True)
             if qtd:
                 st.success(f"{qtd} justificativa(s) reaplicada(s).")
+                recarregar("grade_auditoria")
                 st.rerun()
             else:
                 st.info("Nenhuma justificativa reutilizável encontrada.")

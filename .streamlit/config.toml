@@ -1,11 +1,16 @@
 [client]
 toolbarMode = "minimal"
 
+[server]
+# static/ servido em /app/static — componentes do kit DP Setrata e _versao-app.json
+enableStaticServing = true
+
 [browser]
 gatherUsageStats = false
 
 # ---------------------------------------------------------------------------
-# Identidade visual — mesma do "Controle de EPIs e Uniformes" (Setrata).
+# Identidade visual DP Setrata (28/09/2026) — kit em C:\Projetos\_identidade.
+# Azul Setrata #005584 no destaque e no menu; Calibri Light em tudo.
 # Regra da casa herdada de lá: toda cor sai de um token. Superfícies claras e
 # sólidas, separação por LINHA em vez de sombra, e uma cor de destaque só — o
 # azul-marinho da marca — reservada para ação, foco e seleção. Verde, âmbar e
@@ -13,26 +18,26 @@ gatherUsageStats = false
 # ---------------------------------------------------------------------------
 [theme]
 base = "light"
-font = "\"Calibri Light\", Calibri, \"Segoe UI\", system-ui, -apple-system, sans-serif"
-baseFontSize = 14
+font = "\"Calibri Light\", Calibri, Carlito, \"Segoe UI\", system-ui, -apple-system, sans-serif"
+baseFontSize = 15
 baseRadius = "8px"
 buttonRadius = "8px"
 showWidgetBorder = true
 showSidebarBorder = false
 
-primaryColor            = "#01204D"   # --marca   (bg-deep)
-backgroundColor         = "#F7F8FA"   # --sup-0
+primaryColor            = "#005584"   # azul Setrata (kit)
+backgroundColor         = "#F4F7F9"   # --sup-0
 secondaryBackgroundColor = "#FFFFFF"  # --sup-1
-textColor               = "#0F172A"   # --tinta
-linkColor               = "#2E7DD1"   # --bright
+textColor               = "#1E2A3A"   # --tinta
+linkColor               = "#005584"   # --bright
 borderColor             = "#E3E8EF"   # --linha
 dataframeBorderColor    = "#E3E8EF"
 dataframeHeaderBackgroundColor = "#F1F4F8"   # --sup-2
 
 greenColor  = "#2E7D32"   # --bom
-redColor    = "#C62828"   # --risco
+redColor    = "#D03B3B"   # --risco
 orangeColor = "#B45309"   # --atencao
-blueColor   = "#2E7DD1"   # --info
+blueColor   = "#005584"   # --info
 greenBackgroundColor  = "#ECF5ED"   # --bom-fraco
 redBackgroundColor    = "#FBEDED"   # --risco-fraco
 orangeBackgroundColor = "#FDF3E7"   # --atencao-fraco
@@ -41,11 +46,11 @@ blueBackgroundColor   = "#EAF2FB"   # --info-fraco
 # A chapa do menu é azul-marinho nos dois temas (no sistema de EPIs o
 # --chapa não é redefinido no bloco dark).
 [theme.sidebar]
-backgroundColor          = "#01204D"
-secondaryBackgroundColor = "#0A3161"
+backgroundColor          = "#005584"
+secondaryBackgroundColor = "#013A68"
 textColor                = "#FFFFFF"
 primaryColor             = "#529E2B"   # --accent (verde do item ativo)
-borderColor              = "#1A3A5C"   # --royal
+borderColor              = "#1D6A93"   # --royal
 linkColor                = "#8FBEE8"
 showWidgetBorder         = false
 
@@ -65,9 +70,9 @@ orangeColor = "#E0A030"
 blueColor   = "#6FA8DC"
 
 [theme.dark.sidebar]
-backgroundColor          = "#01204D"
-secondaryBackgroundColor = "#0A3161"
+backgroundColor          = "#005584"
+secondaryBackgroundColor = "#013A68"
 textColor                = "#FFFFFF"
 primaryColor             = "#529E2B"
-borderColor              = "#1A3A5C"
+borderColor              = "#1D6A93"
 linkColor                = "#8FBEE8"

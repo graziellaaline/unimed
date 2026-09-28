@@ -6,12 +6,12 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral
+from app.ui import ICONE, barra_lateral
 from app.grade import grade
 from app import db
 from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes
 
-st.set_page_config(page_title="Histórico — Auditoria Unimed", layout="wide")
+st.set_page_config(page_title="Histórico — Auditoria Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("6 · Histórico de Auditorias")
 

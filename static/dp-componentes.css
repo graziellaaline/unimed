@@ -1,0 +1,108 @@
+/* CÓPIA do kit DP Setrata — NÃO EDITE AQUI. Fonte: C:\Projetos\_identidade\componentes. Atualize com instalar_componentes.py. */
+/* ===========================================================================
+   DP Setrata — componentes de comportamento (V1.0.0, 28/09/2026)
+   Toast/progresso, pergunta Sim/Não, aviso de versão e Novidades.
+   FONTE ÚNICA — a cópia em cada sistema vem do instalar_componentes.py.
+   Prefixo dp- de propósito: `.toast` é classe do Bootstrap e sumia com os
+   avisos das telas (lição do Fioti).
+   =========================================================================== */
+
+.dp-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(12px);
+  max-width: min(680px, 92vw);
+  background: #01204D; color: #F2F6F9;
+  border: 1px solid rgba(167, 198, 213, .25);
+  border-left: 4px solid #A7C6D5;
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif;
+  font-size: 15px; line-height: 1.4; text-align: center;
+  white-space: pre-wrap; word-break: break-word;
+  box-shadow: 0 16px 44px rgba(1, 32, 77, .35);
+  opacity: 0; pointer-events: none; z-index: 100000;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.dp-toast.mostra   { opacity: 1; transform: translateX(-50%) translateY(0); }
+.dp-toast.dp-t-ok       { border-left-color: #0CA30C; }
+.dp-toast.dp-t-err      { border-left-color: #D03B3B; }
+.dp-toast.dp-t-info     { border-left-color: #A7C6D5; }
+.dp-toast.dp-t-aviso    { border-left-color: #FAB219; }
+.dp-aviso { display: none !important; }   /* o dado da ponte Dash nunca aparece */
+.dp-toast.dp-t-progress { border-left-color: #A7C6D5; }
+
+/* Barra: indeterminada por padrão; com % real quando o servidor informa. */
+.dp-toast-prog { display: none; margin-top: 10px; }
+.dp-toast.dp-t-progress .dp-toast-prog { display: block; }
+.dp-toast-trilho { height: 8px; border-radius: 999px; background: rgba(167, 198, 213, .22); overflow: hidden; }
+.dp-toast-trilho > span {
+  display: block; height: 100%; width: 38%; border-radius: 999px;
+  background: linear-gradient(90deg, #005584, #A7C6D5);
+  animation: dp-indeterminada 1.15s ease-in-out infinite;
+}
+.dp-toast.determinada .dp-toast-trilho > span { animation: none; margin-left: 0; width: 0; transition: width .5s ease-out; }
+@keyframes dp-indeterminada { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+.dp-toast-fase { margin-top: 6px; font-size: 13px; color: #D6E4EC; }
+.dp-toast-fase:empty { display: none; }
+
+/* Pergunta Sim/Não e Novidades — card branco no padrão do kit. */
+.dp-confirma-fundo {
+  position: fixed; inset: 0; z-index: 100001;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(1, 32, 77, .45);
+}
+.dp-confirma, .dp-novidades {
+  width: min(460px, 100%);
+  background: #FFFFFF; color: #1E2A3A;
+  border: 1px solid #E3E8EE; border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(1, 32, 77, .35);
+  padding: 22px 22px 18px;
+  font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif;
+}
+.dp-novidades { width: min(620px, 100%); max-height: 80vh; display: flex; flex-direction: column; }
+.dp-confirma-texto { margin: 0 0 18px; font-size: 16px; line-height: 1.45; }
+.dp-confirma-acoes { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.dp-btn {
+  font-family: inherit; font-size: 15px; font-weight: 600;
+  border: 0; border-radius: 10px; padding: 9px 18px; cursor: pointer;
+  background: #529E2B; color: #fff;
+}
+.dp-btn:hover { background: #3F7A21; }
+.dp-btn-2 { background: transparent; color: #005584; border: 1px solid #A7C6D5; }
+.dp-btn-2:hover { background: #E6EEF3; }
+.dp-btn-perigo { background: #D03B3B; }
+.dp-btn-perigo:hover { background: #A92E2E; }
+.dp-btn:focus-visible { outline: 3px solid #A7C6D5; outline-offset: 2px; }
+
+.dp-novidades h2 { margin: 0 0 10px; font-size: 20px; font-weight: 600; color: #005584; }
+.dp-novidades-lista { overflow-y: auto; margin-bottom: 14px; }
+.dp-novidades-nota { margin: 0 0 8px; font-size: 14.5px; color: #5B6675; }
+
+.dp-novidades section { padding: 10px 0; border-top: 1px solid #E3E8EE; }
+.dp-novidades h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.dp-novidades h3 small { font-weight: 400; color: #5B6675; margin-left: 6px; }
+.dp-novidades ul { margin: 0; padding-left: 20px; font-size: 14.5px; line-height: 1.5; }
+
+/* Aviso de versão — faixa no topo, azul Setrata. */
+.dp-versao {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100002;
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px 14px;
+  padding: 10px 16px;
+  background: #005584; color: #fff;
+  font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif; font-size: 15px;
+  box-shadow: 0 2px 10px rgba(1, 32, 77, .3);
+}
+.dp-versao-btn {
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  border-radius: 8px; padding: 6px 14px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, .6); background: transparent; color: #fff;
+}
+.dp-versao-ok { background: #fff; color: #005584; border-color: #fff; }
+body.dp-com-aviso-versao { padding-top: 48px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dp-toast { transition: none; }
+  .dp-toast-trilho > span { animation: none; width: 100%; }
+}
+
+/* "Agora não" é link, não botão (vem depois de .dp-versao-btn para valer). */
+.dp-versao .dp-versao-adiar { border-color: transparent; background: transparent; text-decoration: underline; font-weight: 400; }

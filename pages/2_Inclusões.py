@@ -7,14 +7,14 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral
+from app.ui import ICONE, barra_lateral
 from app.grade import grade
 from app.processamento import indice_titulares, localizar_titular
 from app.exportacao import exportar_excel, exportar_descricoes_unimed
 from app.regras import identificar_incluidos_mes, aplicar_regras, calcular_stats
 from app import db
 
-st.set_page_config(page_title="Inclusões do Mês — Unimed", layout="wide")
+st.set_page_config(page_title="Inclusões do Mês — Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("2 · Inclusões no Mês de Referência")
 

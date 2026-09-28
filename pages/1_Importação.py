@@ -10,7 +10,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.ui import barra_lateral, tabela
+from app.ui import ICONE, Progresso, barra_lateral, tabela
 from app.processamento import (ler_contratos, ler_compra,
                                  ler_faturas_csv, cruzar, mesclar_desligados,
                                  _encontrar_col, _encontrar_col_prioritaria,
@@ -20,7 +20,7 @@ from app.exclusoes_indevidas import ler_desligados  # usado em page 6 e fallback
 from app.regras import aplicar_regras, calcular_stats, identificar_incluidos_mes, _parse_periodo
 from app import db
 
-st.set_page_config(page_title="Importação — Auditoria Unimed", layout="wide")
+st.set_page_config(page_title="Importação — Auditoria Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("1 · Importação de Arquivos")
 
@@ -30,34 +30,46 @@ from app.regras import identificar_incluidos_mes
 _ultimos = db.listar_periodos()
 
 
-def _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp, p_desl=None):
+ETAPAS_PROCESSAMENTO = 8
+
+
+def _processar_auditoria(periodo, cliente, p_cont, p_fats, p_comp, p_desl=None, prog=None):
+    etapa = prog.etapa if prog else (lambda _fase: None)
     mc  = db.carregar_mapeamento(cliente, "contratos") if cliente else {}
     mf  = db.carregar_mapeamento(cliente, "fatura")    if cliente else {}
     mcp = db.carregar_mapeamento(cliente, "compra")    if cliente else {}
 
+    etapa("Lendo contratos")
     df_cont   = ler_contratos(p_cont, mc)
+    etapa("Lendo faturas")
     df_fat    = ler_faturas_csv(p_fats, mf) if p_fats else pd.DataFrame()
+    etapa("Lendo compra")
     df_compra = ler_compra(p_comp, mcp)     if p_comp else pd.DataFrame()
 
     if df_cont.empty:
         raise ValueError("Não foi possível ler a planilha de contratos. Verifique o arquivo.")
 
+    etapa("Cruzando contrato, fatura e compra")
     df_cruzado = cruzar(df_cont, df_fat, df_compra, periodo)
 
     # ── Mesclagem com planilha de contratos inativos (desligados) ────────────
     # A planilha de inativos tem a mesma estrutura da de ativos — lida com ler_contratos.
     df_desl   = None
     relatorio = {}
+    etapa("Mesclando desligados")
     if p_desl:
         df_desl = ler_contratos(p_desl)   # mesma estrutura → usa mesma função
         df_cruzado, relatorio = mesclar_desligados(df_cruzado, df_desl, periodo)
 
+    etapa("Aplicando regras")
     df_audit = aplicar_regras(df_cruzado)
     stats  = calcular_stats(df_audit)
     df_inc = identificar_incluidos_mes(df_audit, periodo)
+    etapa("Salvando no histórico")
     aid = db.salvar_auditoria(df_audit, stats, periodo, cliente)
 
     # Herdar justificativas da auditoria anterior — nunca perder aprovações ao reprocessar
+    etapa("Trazendo justificativas da auditoria anterior")
     db.migrar_justificativas(aid, periodo, cliente)
 
     if cliente:
@@ -204,7 +216,7 @@ elif _ultimos:
             use_container_width=True,
         ):
             try:
-                with st.spinner(f"Reprocessando {_ultimo['periodo']}…"):
+                with Progresso(f"Reprocessando {_ultimo['periodo']}", ETAPAS_PROCESSAMENTO) as _prog:
                     _p_cont = (_arqs_ult.get("contratos") or [{}])[0].get("caminho")
                     _p_fats = [x["caminho"] for x in _arqs_ult.get("fatura", [])]
                     _p_comp_item = (_arqs_ult.get("compra") or [None])[0]
@@ -213,7 +225,7 @@ elif _ultimos:
                     _p_desl = _p_desl_item.get("caminho") if isinstance(_p_desl_item, dict) else None
                     df_r, stats_r, df_inc_r, aid_r, df_desl_r, rel_r = _processar_auditoria(
                         _ultimo["periodo"], _ultimo["cliente"],
-                        _p_cont, _p_fats, _p_comp, _p_desl,
+                        _p_cont, _p_fats, _p_comp, _p_desl, prog=_prog,
                     )
                     db.salvar_arquivos_auditoria(aid_r, {
                         "contratos":  [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in _arqs_ult.get("contratos", [])],
@@ -284,7 +296,7 @@ if any(arquivos_fontes.get(k) for k in ("contratos", "fatura", "compra")):
         _periodo_reprocess = periodo or st.session_state.get("periodo", "")
         _cliente_reprocess = cliente or st.session_state.get("cliente", "")
         try:
-            with st.spinner("Reprocessando…"):
+            with Progresso(f"Reprocessando {_periodo_reprocess}", ETAPAS_PROCESSAMENTO) as _prog:
                 _p_cont = (arquivos_fontes.get("contratos") or [{}])[0].get("caminho")
                 _p_fats = [x["caminho"] for x in arquivos_fontes.get("fatura", [])]
                 _p_comp = (arquivos_fontes.get("compra") or [None])[0]
@@ -294,7 +306,7 @@ if any(arquivos_fontes.get(k) for k in ("contratos", "fatura", "compra")):
                 _p_desl = _p_desl_item.get("caminho") if isinstance(_p_desl_item, dict) else None
                 df_audit_r, stats_r, df_inc_r, aid_r, df_desl_r, rel_r = _processar_auditoria(
                     _periodo_reprocess, _cliente_reprocess,
-                    _p_cont, _p_fats, _p_comp, _p_desl,
+                    _p_cont, _p_fats, _p_comp, _p_desl, prog=_prog,
                 )
                 db.salvar_arquivos_auditoria(aid_r, {
                     "contratos":  [{"nome": Path(x["caminho"]).name, "origem": x["caminho"]} for x in arquivos_fontes.get("contratos", [])],
@@ -517,13 +529,13 @@ if btn:
     p_desl = None
 
     try:
-        with st.spinner(f"Processando auditoria de {periodo}…"):
+        with Progresso(f"Processando auditoria de {periodo}", ETAPAS_PROCESSAMENTO) as _prog:
             p_cont = _tmp(arq_cont)
             p_fats = [_tmp(a) for a in (arq_fats or [])]
             p_comp = _tmp(arq_comp) if arq_comp else None
             p_desl = _tmp(arq_desl) if arq_desl else None
             df_audit, stats, df_inc, aid, df_desl, relatorio = _processar_auditoria(
-                periodo, cliente, p_cont, p_fats, p_comp, p_desl
+                periodo, cliente, p_cont, p_fats, p_comp, p_desl, prog=_prog,
             )
 
         arquivos_salvos = {

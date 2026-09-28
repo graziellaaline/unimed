@@ -45,6 +45,23 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
             axis=1,
         )
 
+    # Quanto a Unimed cobra a mais (ou a menos) do que o contrato prevê, na
+    # MENSALIDADE DO TITULAR — que é o que o contrato define. `Valor Fatura` é o
+    # total da linha e soma dependentes e conta médica, então comparar por ele
+    # fazia todo mundo com dependente parecer cobrança a maior (ex.: GERMANO
+    # FONSECA GALVAO aparecia +1.228,78 quando a mensalidade dele está 23,79
+    # ABAIXO do contrato). Sinal preservado: positivo = acima do contrato.
+    # Zerado para quem não está na fatura, senão viraria só "-contrato".
+    if {"_vlr_mensalidade_fat", "Valor Contrato", "_na_fatura"}.issubset(df.columns):
+        df["Dif. Fatura x Contrato"] = df.apply(
+            lambda row: round(
+                float(row.get("_vlr_mensalidade_fat", 0) or 0)
+                - float(row.get("Valor Contrato", 0) or 0),
+                2,
+            ) if bool(row.get("_na_fatura", False)) else 0.0,
+            axis=1,
+        )
+
     if {"Valor Fatura", "Valor Compra Total", "_na_fatura", "_na_compra"}.issubset(df.columns):
         df["Dif. Fatura x Compra"] = df.apply(
             lambda row: round(

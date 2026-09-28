@@ -182,7 +182,7 @@ def _parse_brl(v) -> float:
         return 0.0
 
 
-def _classificar_plano(vlr_raw: str) -> tuple[bool, bool]:
+def _classificar_plano(vlr_raw: str, plano_raw: str = "") -> tuple[bool, bool]:
     """
     Interpreta o campo 'Plano de Saúde' da planilha de contratos.
     Retorna (tem_direito, copart_apos_exp).
@@ -198,6 +198,21 @@ def _classificar_plano(vlr_raw: str) -> tuple[bool, bool]:
     descritivos contêm frases como "450,00 - Cargo X - Pesquisa NÃO tem plano" onde o
     valor 450 indica elegibilidade e "NÃO" faz parte do nome do cargo/categoria.
     """
+    # A planilha tem DUAS colunas: "Plano de Saúde" (o texto: "Sim com
+    # coparticipação após experiência") e "Valor Plano de Saúde" (o número).
+    # Historicamente o marcador vinha grudado no número ("468,00 - Imediato") e
+    # só ele era lido — corrigir a coluna de texto não surtia efeito nenhum.
+    # Agora o texto manda, e o valor continua valendo quando a coluna de texto
+    # não existe ou nada diz (outros clientes, planilhas antigas).
+    p = _norm(plano_raw)
+    if p:
+        if "EXPERIENCIA" in p:
+            return True, True
+        if "IMEDIATO" in p:
+            return True, False
+        if p in ("NAO", "N", "0", "-", "NONE", "NAN"):
+            return False, False
+
     s = _norm(vlr_raw)
 
     if not s or s in ("NAO", "N", "0", "-", "NONE", "NAN"):
@@ -357,21 +372,39 @@ def localizar_titular(row, indice: dict,
 # ---------------------------------------------------------------------------
 
 # Regras de elegibilidade ao plano de saúde:
-# • TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível (exceção prioritária).
+# • Exceção individual por cargo (ver _EXCECOES_POR_CARGO) → tem direito, acima de tudo.
+# • TERCEIRIZAÇÃO + depto da lista de exceção (PLANALTINA, 298, 345, 363, BAYER)
+#   → sempre elegível, mesmo com contrato DETERMINADO.
 # • TERCEIRIZAÇÃO + INDETERMINADO + "Sim" na planilha → elegível desde a admissão (sem carência).
 # • INDETERMINADO puro (sem TERCEIRIZAÇÃO) + depto MONS/BREED → elegível imediato (sem carência de 90 dias).
 # • INDETERMINADO puro (sem TERCEIRIZAÇÃO) + tem direito na planilha → elegível após 90 dias da admissão.
-# • TMG → sem direito, exceto MAURO ALVES DA SILVA.
-# • Contratos especiais (134, 119…) + INDETERMINADO → tem direito; + DETERMINADO → sem direito.
+# • TMG → sem direito, exceto MAURO ALVES DA SILVA (exceção pelo cargo, contrato 292).
+# • Depto de contrato especial (134, 119…) + INDETERMINADO → tem direito; + DETERMINADO → sem direito.
 # • Qualquer DETERMINADO → sem direito (regra geral).
 # • Demais → segue planilha de contratos (vlr_contrato > 0).
 _PALAVRA_DETERMINADO   = "DETERMINADO"
 _PALAVRA_TERCEIRIZACAO = "TERCEIR"
 _PALAVRA_TMG           = "TMG"
-_CONTRATOS_ESPECIAIS   = {"134", "119"}   # contratos com direito por código, exceto se DETERMINADO
-_DEPTOS_COM_EXCECAO    = ("PLANALTINA", "298")
+# Códigos de contrato que dão direito ao plano por si sós, exceto se DETERMINADO.
+# O código fica no DEPARTAMENTO ("MONS- LAB UDI_119 TERC", "INNOVATIVE_134 TERC"),
+# nunca no tipo de contrato — é lá que ele tem de ser procurado.
+_DEPTOS_CONTRATO_ESPECIAL = {"134", "119"}
+# Departamentos em que o contrato DETERMINADO **não** tira o direito ao plano —
+# o código é o sufixo do departamento ("..._345 TERC"). Determinado sem direito
+# continua sendo a regra geral; estes são os clientes que fogem dela. Os da
+# BAYER via de regra têm direito. O 134 (INNOVATIVE_134) NÃO entra aqui: aquele
+# contrato é determinado sem direito, mesmo a planilha marcando "Sim".
+_DEPTOS_COM_EXCECAO    = ("PLANALTINA", "298", "345", "363", "BAYER")
 _DEPTOS_MONS_BREED     = ("MONS", "BREED")  # depto deve conter AMBAS as palavras — ver eh_depto_mons_breed
 _MAURO_EXCECAO_NORM    = "MAURO ALVES DA SILVA"   # exceção TMG — tem direito ao plano
+
+# Exceções individuais, pelo CARGO: a pessoa tem plano mesmo que o contrato dela
+# não dê direito e a planilha diga "Não". Cada item é (nome, trecho do depto) —
+# o departamento entra na chave para o homônimo de outro contrato não herdar a
+# exceção. Mauro é o único do contrato 292 (TMG) com plano, e é pelo cargo.
+_EXCECOES_POR_CARGO = (
+    (_MAURO_EXCECAO_NORM, "292"),
+)
 _ANATACHA_NORM         = "ANATACHA CARDOSO ARAUJO" # regra especial: mensalidade=empresa, copart=funcionária
 
 CONTRATOS_HEADER_GROUPS = [
@@ -448,6 +481,10 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
         # "Admissão" e traz, logo antes, "Contrato Admissão" — que é o TIPO do
         # contrato. A busca por substring pegava essa primeira e o campo de data
         # vinha com "IN - Indeterminado". Daí a busca priorizada + `evitar`.
+        # "Plano de Saúde" (texto) — `evitar` impede casar com "Valor Plano de Saúde"
+        "plano_saude":  col_data("plano_saude",
+                            "plano de saude", "plano de saúde", "plano saude",
+                            "plano", evitar=("valor", "vlr", "vl.")),
         "admissao":     col_data("admissao",
                             "dt. admissao", "dt. admissão", "data admissao", "data admissão",
                             "dt admissao", "dt adm", "data adm", "admissao", "admissão",
@@ -472,9 +509,10 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
                            "NOME FUNCIONARIO", "NOME DO FUNCIONARIO"):
             continue
 
-        vlr_raw = str(row.get(c["vlr_contrato"]) if c["vlr_contrato"] else "")
+        vlr_raw   = str(row.get(c["vlr_contrato"]) if c["vlr_contrato"] else "")
+        plano_raw = str(row.get(c["plano_saude"]) if c["plano_saude"] else "")
         vlr = _parse_brl(vlr_raw)
-        tem_direito, copart_apos_exp = _classificar_plano(vlr_raw)
+        tem_direito, copart_apos_exp = _classificar_plano(vlr_raw, plano_raw)
 
         departamento  = _str(row.get(c["departamento"]) if c["departamento"] else "")
         contrato_adm  = _str(row.get(c["contrato_adm"]) if c["contrato_adm"] else "")
@@ -485,14 +523,25 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
         eh_determinado    = _PALAVRA_DETERMINADO in contrato_norm and "INDETERMINADO" not in contrato_norm
         eh_terceirizacao  = _PALAVRA_TERCEIRIZACAO in contrato_norm
         eh_tmg            = _PALAVRA_TMG in contrato_norm
-        eh_especial       = any(cod in contrato_norm for cod in _CONTRATOS_ESPECIAIS)
+        eh_especial       = any(cod in dept_norm for cod in _DEPTOS_CONTRATO_ESPECIAL)
         eh_depto_excecao  = any(kw in dept_norm for kw in _DEPTOS_COM_EXCECAO)
         eh_depto_mons_breed = all(kw in dept_norm for kw in _DEPTOS_MONS_BREED)
         func_norm_val     = _norm(func)
         eh_mauro_excecao  = func_norm_val == _MAURO_EXCECAO_NORM
 
-        if eh_terceirizacao and eh_depto_excecao:
-            # Exceção prioritária: TERCEIRIZAÇÃO + depto PLANALTINA/298 → sempre elegível
+        eh_excecao_cargo = any(
+            func_norm_val == nome and trecho in dept_norm
+            for nome, trecho in _EXCECOES_POR_CARGO
+        )
+
+        if eh_excecao_cargo:
+            # Exceção individual pelo cargo — vale acima de tudo, inclusive do
+            # "Não" da planilha: é a pessoa certa no departamento certo.
+            inelegivel_tipo = False
+            tem_direito     = True
+        elif eh_terceirizacao and eh_depto_excecao:
+            # TERCEIRIZAÇÃO + depto da lista de exceção → sempre elegível,
+            # mesmo com contrato DETERMINADO
             inelegivel_tipo = False
             tem_direito     = True
         elif eh_terceirizacao and "INDETERMINADO" in contrato_norm and tem_direito:
@@ -504,7 +553,10 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             inelegivel_tipo = True
             tem_direito     = False
         elif eh_especial and not eh_determinado:
-            # Contratos especiais (134, 119…) + INDETERMINADO → tem direito imediato
+            # Depto de contrato especial (134, 119…) + INDETERMINADO → direito imediato.
+            # É o que segura quem veio da planilha de DESLIGADOS, que não traz as
+            # colunas de plano de saúde: sem esta regra o departamento inteiro
+            # virava "sem direito" assim que a pessoa era desligada.
             inelegivel_tipo = False
             tem_direito     = True
             copart_apos_exp = False   # direito imediato — ignora texto "após experiência"
@@ -513,9 +565,14 @@ def ler_contratos(path, col_map: dict = None) -> pd.DataFrame:
             inelegivel_tipo = True
             tem_direito     = False
         elif "INDETERMINADO" in contrato_norm and not eh_terceirizacao and eh_depto_mons_breed and tem_direito:
-            # INDETERMINADO + depto MONS/BREED → adesão imediata (sem carência de 90 dias)
+            # INDETERMINADO + depto MONS/BREED → adesão imediata, ou seja, isento
+            # da carência de 90 dias que vale para os demais INDETERMINADO.
+            #
+            # `copart_apos_exp` NÃO é zerado aqui de propósito: ele só vem True
+            # quando a planilha escreveu "após experiência" na linha da pessoa, e
+            # o que está escrito nela vale mais que o padrão do departamento.
+            # Zerar aqui fazia a planilha ser corrigida e a tela não mudar nada.
             inelegivel_tipo = False
-            copart_apos_exp = False
         elif "INDETERMINADO" in contrato_norm and tem_direito:
             # INDETERMINADO puro (sem TERCEIRIZAÇÃO) → elegível após 90 dias da admissão
             inelegivel_tipo = False
@@ -1189,6 +1246,24 @@ def cruzar(df_cont: pd.DataFrame,
 # Mesclagem de planilha de desligados
 # ---------------------------------------------------------------------------
 
+def _recencia_inativo(irow) -> tuple:
+    """
+    Desempata duas linhas da planilha de desligados com o MESMO nome: vence o
+    contrato mais recente (demissão, depois admissão).
+
+    Quem foi temporário e depois efetivado tem duas linhas iguais no nome e
+    diferentes na matrícula. A fatura da Unimed só traz a carteirinha, nunca a
+    matrícula da empresa, então o casamento cai no nome — e antes vencia
+    simplesmente a última linha do arquivo, que podia ser o contrato antigo e
+    trazia a demissão errada (ex.: 23/02/2023 em vez de 15/09/2026).
+    """
+    def _ts(v):
+        dt = pd.to_datetime(str(v or "").strip(), dayfirst=True, errors="coerce")
+        return pd.Timestamp.min if pd.isna(dt) else dt
+
+    return (_ts(irow.get("demissao", "")), _ts(irow.get("admissao", "")))
+
+
 def _inativo_por_nome_estendido(audit_nn: str, nome_map: dict):
     """
     Casamento de último recurso para quem aparece SÓ na fatura, sem matrícula.
@@ -1274,7 +1349,11 @@ def mesclar_desligados(
         if cod:
             cod_map.setdefault(cod_func_chave(cod), []).append(irow)
         if nn:
-            nome_map[nn] = irow
+            # Mais recente vence — ver _recencia_inativo. O ">=" mantém o
+            # comportamento antigo (última linha) quando as datas empatam.
+            anterior = nome_map.get(nn)
+            if anterior is None or _recencia_inativo(irow) >= _recencia_inativo(anterior):
+                nome_map[nn] = irow
 
     df_out = df_audit.copy()
     matched_norms: set = set()

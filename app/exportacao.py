@@ -22,7 +22,7 @@ _COLUNAS_AUDITORIA = [
     "Funcionário", "Departamento", "Contrato Adm.", "Cod. Funcionário",
     "Tem Direito", "Está na Fatura", "Está na Compra",
     "Valor Contrato", "Valor Empresa (Compra)", "Valor Fatura", "Valor Compra Total",
-    "Dif. Contrato x Compra", "Dif. Fatura x Compra",
+    "Dif. Fatura x Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra",
     "Data Inclusão", "Dt. Admissão", "Dt. Demissão",
     "Status", "Inconsistência", "Ação Sugerida",
 ]
@@ -40,7 +40,7 @@ _COLUNAS_EXCLUSOES = [
 ]
 
 _MOEDA = {"Valor Fatura", "Valor Empresa (Compra)", "Valor Compra Total",
-          "Valor Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra",
+          "Valor Contrato", "Dif. Fatura x Contrato", "Dif. Contrato x Compra", "Dif. Fatura x Compra",
           "Mensalidade", "Dependentes", "Coparticipação"}
 
 

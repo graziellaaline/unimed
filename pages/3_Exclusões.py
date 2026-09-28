@@ -6,13 +6,13 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral, tabela
+from app.ui import ICONE, barra_lateral, tabela
 from app.grade import grade
 from app import db
 from app.processamento import _norm, indice_titulares, localizar_titular
 from app.exportacao import exportar_descricoes_unimed, exportar_excel_exclusoes
 
-st.set_page_config(page_title="Exclusões do Mês — Unimed", layout="wide")
+st.set_page_config(page_title="Exclusões do Mês — Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("3 · Exclusões do Mês de Referência")
 

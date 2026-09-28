@@ -10,13 +10,13 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from app.ui import barra_lateral, tabela
+from app.ui import ICONE, barra_lateral, tabela
 from app.grade import grade
 from st_aggrid import JsCode
 from app import db
 from app.exclusoes_indevidas import ler_desligados
 
-st.set_page_config(page_title="Exclusões Indevidas — Unimed", layout="wide")
+st.set_page_config(page_title="Exclusões Indevidas — Unimed", page_icon=ICONE, layout="wide")
 barra_lateral()
 st.header("4 · Auditoria de Exclusões Indevidas")
 st.caption(

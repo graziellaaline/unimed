@@ -33,3 +33,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+
+# Gerado na subida por app/ui.py (aviso de versão do kit DP Setrata)
+static/_versao-app.json

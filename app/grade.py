@@ -12,6 +12,9 @@ Filtro e ordenação rodam no navegador — a página não recarrega a cada cliq
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode, JsCode
@@ -151,11 +154,11 @@ class {
 _PALETA = {
     "light": {
         "sup_1": "#FFFFFF", "sup_2": "#F1F4F8",
-        "linha": "#E3E8EF", "linha_forte": "#CBD5E1",
-        "tinta": "#0F172A", "tinta_3": "#8592A6",
-        "marca": "#01204D", "marca_2": "#0A3161", "marca_fraco": "#EDF1F6",
-        "azul": "#2E7DD1",
-        "foco": "0 0 0 3px rgba(1, 32, 77, .14)",
+        "linha": "#E3E8EE", "linha_forte": "#CBD5E1",
+        "tinta": "#1E2A3A", "tinta_3": "#8A95A5",
+        "marca": "#005584", "marca_2": "#013A68", "marca_fraco": "#E6EEF3",
+        "azul": "#005584",
+        "foco": "0 0 0 3px rgba(0, 85, 132, .14)",
     },
     "dark": {
         "sup_1": "#1A1F27", "sup_2": "#222833",
@@ -206,8 +209,36 @@ function (e) {
 # Onde o filtro/ordenação de cada grade fica guardado entre reruns.
 _CHAVE_ESTADO = "_estado_grade_%s"
 
+# Quantas vezes a grade já foi remontada — entra na chave do componente.
+_CHAVE_GERACAO = "_geracao_grade_%s"
+
+# A ordem das colunas é escolha do usuário: ele arrasta o cabeçalho e a posição
+# tem de continuar lá amanhã. Por isso vai para disco, não para a sessão.
+_DIR_ORDEM = Path(__file__).resolve().parent.parent / "dados"
+
+
+def _arquivo_ordem(key: str) -> Path:
+    return _DIR_ORDEM / f"ordem_colunas_{key}.json"
+
+
+def _ordem_salva(key: str) -> list:
+    try:
+        return list(json.loads(_arquivo_ordem(key).read_text(encoding="utf-8")))
+    except Exception:
+        return []
+
+
+def _gravar_ordem(key: str, colunas: list):
+    try:
+        _DIR_ORDEM.mkdir(parents=True, exist_ok=True)
+        _arquivo_ordem(key).write_text(
+            json.dumps(colunas, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass                                  # não pode derrubar a tela
+
 # A grade roda em iframe: a fonte do tema do Streamlit não chega sozinha.
-_FONTE = '"Calibri Light", Calibri, "Segoe UI", system-ui, -apple-system, sans-serif'
+_FONTE = '"Calibri Light", Calibri, Carlito, "Segoe UI", system-ui, -apple-system, sans-serif'
 
 
 def _css_filtro(tema: str) -> dict:
@@ -235,19 +266,30 @@ def _css_filtro(tema: str) -> dict:
         "width": "7px",
         "height": "7px",
         "border-radius": "999px",
-        "background": c["azul"],
-        "box-shadow": f"0 0 0 1.5px {c['sup_1']}",
+        "background": "#A7C6D5",
+        "box-shadow": "0 0 0 1.5px #005584",
         "pointer-events": "none",
     }
     return {
         ".ag-root-wrapper, .ag-theme-streamlit": {"font-family": _FONTE},
+        # Cabeçalho no padrão da tabela do kit DP Setrata: azul com letra branca.
+        ".ag-header, .ag-header-row, .ag-header-cell, .ag-header-group-cell": {
+            "background-color": "#005584",
+            "color": "#FFFFFF",
+        },
+        ".ag-header-cell-text": {"color": "#FFFFFF", "font-weight": "700"},
+        ".ag-header .ag-icon, .ag-header-cell-menu-button, .ag-header-cell-filter-button": {
+            "color": "rgba(255, 255, 255, .85)",
+        },
+        ".ag-header .ag-checkbox-input-wrapper": {"background-color": "#FFFFFF"},
+        ".ag-header-cell-resize::after": {"background-color": "rgba(255, 255, 255, .25)"},
         ".ag-header-cell-filtered .ag-header-cell-filter-button": {
             "position": "relative",
-            "color": c["azul"],
+            "color": "#FFFFFF",
             "opacity": "1",
         },
         ".ag-header-cell-filtered .ag-header-cell-filter-button::after": ponto,
-        ".ag-header-icon.ag-filter-active": {"position": "relative", "color": c["azul"]},
+        ".ag-header-icon.ag-filter-active": {"position": "relative", "color": "#FFFFFF"},
         ".ag-header-icon.ag-filter-active::after": ponto,
         ".ag-header-cell-filtered .ag-header-cell-text": {"font-weight": "600"},
         ".uni-filtro": {
@@ -402,6 +444,15 @@ def grade(
         st.info("Nenhum registro para exibir.")
         return None
 
+    # Ordem das colunas: a que o usuário deixou da última vez que arrastou.
+    # Coluna nova (que ainda não existia quando ele arrumou) entra no fim, em
+    # vez de bagunçar o que ele montou.
+    ordem = _ordem_salva(key)
+    if ordem:
+        arrumadas = [c for c in ordem if c in df.columns]
+        novas = [c for c in df.columns if c not in arrumadas]
+        df = df[arrumadas + novas]
+
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_default_column(
         filter=_FILTRO_JS,
@@ -439,11 +490,12 @@ def grade(
             gb.configure_column(col, **cfg)
 
     if selecao:
-        # Sem `header_checkbox`: marcar tudo pelo cabeçalho selecionava, num
-        # clique, todo o conjunto filtrado — e ações em lote passavam a atingir
-        # gente que o usuário nunca tinha marcado. A seleção é sempre explícita,
-        # linha por linha.
-        gb.configure_selection("multiple", use_checkbox=True, header_checkbox=False)
+        # Um controle só no cabeçalho da coluna de tique, que faz as duas
+        # funções: marca todas as linhas e, clicado de novo, desmarca todas.
+        # `filtered_only` limita ao que o filtro deixou à vista — marcar "todos"
+        # nunca alcança linha que não está na tela.
+        gb.configure_selection("multiple", use_checkbox=True,
+                               header_checkbox=True, header_checkbox_filtered_only=True)
 
     opcoes = gb.build()
     opcoes["suppressMenuHide"] = True       # funil sempre visível, não só no hover
@@ -454,10 +506,11 @@ def grade(
     opcoes["enableCellTextSelection"] = True
     opcoes["ensureDomOrder"] = True
     opcoes["onCellDoubleClicked"] = _COPIAR_JS
-    # A ordem das colunas é a definida na página e não muda: sem arrastar
-    # cabeçalho, sem coluna sumindo ao soltar fora, e a ordem se mantém quando
-    # os dados são recarregados.
-    opcoes["suppressMovableColumns"] = True
+    # Arrastar cabeçalho é permitido — a ordem é escolha do usuário e fica
+    # gravada em disco (ver `_ordem_salva`). `suppressDragLeaveHidesColumns`
+    # impede que uma coluna suma ao ser solta fora da grade, e
+    # `maintainColumnOrder` evita que a ordem se embaralhe ao recarregar dados.
+    opcoes["suppressMovableColumns"] = False
     opcoes["suppressDragLeaveHidesColumns"] = True
     opcoes["maintainColumnOrder"] = True
     if cor_linha is not None:
@@ -483,12 +536,21 @@ def grade(
     opcoes["context"] = {"estadoSalvo": st.session_state[inicial]}
     opcoes["onFirstDataRendered"] = _RESTAURAR_JS
 
+    # Assim que uma célula é editada, o componente passa a IGNORAR todo dado
+    # novo vindo do Python — é a estratégia "client_wins" dele, e o próprio
+    # componente avisa no console: "Data was edited on Grid. Ignoring further".
+    # Resultado: você salvava a justificativa e a coluna "Justificado" continuava
+    # "Não" na tela, mesmo já gravada no banco. A saída é remontar a grade (ver
+    # `recarregar`), que é o único jeito de limpar essa trava sem perder o que o
+    # usuário digitou enquanto edita.
+    chave_componente = f"{key}__g{st.session_state.get(_CHAVE_GERACAO % key, 0)}"
+
     resposta = AgGrid(
         df,
         gridOptions=opcoes,
         height=height,
         theme="streamlit",
-        key=key,
+        key=chave_componente,
         allow_unsafe_jscode=True,
         enable_enterprise_modules=False,    # só Community — sem licença paga
         custom_css=_css_filtro(_tema_atual()),
@@ -512,12 +574,36 @@ def grade(
             "ordem":  (bruto.get("sort") or {}).get("sortModel") or [],
         }
 
+    # Arrastou uma coluna? Grava a nova ordem para ela estar lá amanhã.
+    try:
+        estado_cols = resposta.columns_state or []
+    except Exception:
+        estado_cols = []
+    atual = [c.get("colId") for c in estado_cols if isinstance(c, dict) and c.get("colId")]
+    atual = [c for c in atual if c in df.columns]
+    if atual and atual != list(df.columns):
+        _gravar_ordem(key, atual)
+
     return resposta
+
+
+def recarregar(key: str):
+    """
+    Faz a grade aceitar os dados novos do Python na próxima exibição.
+
+    Chame depois de gravar algo que muda a tabela (uma justificativa, por
+    exemplo). Sem isso o componente ignora o dado novo assim que qualquer
+    célula tiver sido editada. O filtro e a ordenação são preservados: o estado
+    vivo vira o estado inicial da grade remontada.
+    """
+    st.session_state[_CHAVE_GERACAO % key] = st.session_state.get(_CHAVE_GERACAO % key, 0) + 1
+    st.session_state[f"_estado_inicial_grade_{key}"] = st.session_state.get(_CHAVE_ESTADO % key) or {}
 
 
 def limpar_estado(key: str):
     """Descarta filtro e ordenação guardados de uma grade."""
     st.session_state.pop(_CHAVE_ESTADO % key, None)
+    st.session_state.pop(f"_estado_inicial_grade_{key}", None)
 
 
 def cor_por_status() -> JsCode:

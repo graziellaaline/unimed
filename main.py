@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 from version import __version__
-from app.ui import barra_lateral
+from app.ui import ICONE, barra_lateral
 
 st.set_page_config(
     page_title=f"Auditoria Unimed {__version__}",
-    page_icon="🏥",
+    page_icon=ICONE,
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 barra_lateral()
-st.title("🏥 Auditoria Unimed")
+st.title("Auditoria Unimed")
 st.markdown("""
 Use o menu lateral para navegar:
 

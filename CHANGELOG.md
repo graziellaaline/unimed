@@ -12,6 +12,67 @@
 
 ## Histórico
 
+### V1.28.0 - 2026-09-28
+- **Barra de progresso no processamento.** Processar e reprocessar a auditoria agora mostram a barra do kit DP Setrata com a etapa em andamento, "3 de 8", porcentagem e tempo (lendo contratos, faturas, compra, cruzando, desligados, regras, salvando, justificativas) — no lugar do "Processando…" parado.
+- Ao terminar aparece "concluído em Ns"; se der erro, o aviso vermelho com o motivo. Componente `Progresso` em `app/ui.py`.
+
+### V1.27.0 - 2026-09-28
+- **Aviso de versão nova.** Quando o sistema é atualizado, a tela aberta mostra a faixa "Nova versão disponível — Atualizar", igual aos outros sistemas do DP.
+- **Novidades.** Depois de atualizar, aparece o que mudou na versão (tirado deste CHANGELOG).
+- **Avisos no padrão dos outros sistemas.** Componentes do kit DP Setrata instalados em `static/` pelo `instalar_componentes.py`; aviso do sistema passa a ser o `DP.toast` do kit (`aviso()` em `app/ui.py`). O serviço agora sobe por `servico.py`, que grava `static/_versao-app.json` na subida (NSSM: `servico.py --server.port 8055 ...`).
+
+### V1.26.0 - 2026-09-28
+- **Logo Setrata no menu** e ícone Setrata na aba do navegador (antes: emoji 🏥). Logo e ícone lidos direto do kit `C:\Projetos\_identidade`; cópia de reserva em `app/marca/`.
+- **Menu na casca do kit:** azul Setrata com brilho azul-claro e grade sutil, igual ao portal.
+- **Indicadores (números do topo) no quadro do kit:** fundo azul bem claro, número grande escuro em negrito.
+- **Botões:** principal em verde (ação); secundário contornado em azul. Blocos abertos/fechados como card branco.
+- **Tabelas:** cabeçalho azul Setrata com letra branca; cores do filtro e da seleção passam para o azul do kit.
+
+### V1.25.0 - 2026-09-28
+- **Nova identidade visual DP Setrata.** Menu, botões, números e links no azul Setrata; Calibri Light em todo o sistema, inclusive títulos e números.
+- **Gráficos no padrão dos relatórios.** Série única em azul Setrata; duas séries (ex.: Fatura × Compra) em azul + azul-claro; vermelho só para alerta. Tema Altair `dp_setrata` em `app/ui.py` (cores copiadas do kit `C:\Projetos\_identidade`, que usa Plotly).
+- Avisos (`st.toast`) com a faixa azul do kit. Originais guardados em `_antigos/`.
+
+### V1.24.2 - 2026-09-22
+- **Correcao: a regra dos contratos especiais (119, 134) procurava o codigo no lugar errado.** Ela olhava o **tipo de contrato** ("Terceirizacao Indeterminado"), mas o codigo mora no **departamento** (`MONS- LAB UDI_119 TERC`, `INNOVATIVE_134 TERC`) — em nenhuma das 544 linhas de 09/2026 o codigo aparece no tipo de contrato, ou seja, a regra **nunca disparava**.
+- Quem esta na planilha de ATIVOS nao sentia o erro: o direito vinha da coluna "Plano de Saude" (os 22 do `_119` estao todos como "Sim com coparticipacao imediato", R$ 425,78). Mas a planilha de **DESLIGADOS nao tem coluna de plano de saude nenhuma** — nela so existem cadastro, admissao e demissao. Resultado: ao ser desligada, a pessoa do `_119` perdia o direito e passava a ser acusada de **"Sem valor previsto no contrato mas consta na fatura"**, cobranca indevida que nao existe.
+  - Corrigidos `GUSTAVO ALEXANDRE NEVES RODRIGUES` e `FELIPE RICARDO ROCHA`, os dois do `MONS- LAB UDI_119 TERC`: continuam apontados como **"Desligado na fatura"** (que e o problema real e procede), sem a acusacao falsa de cobranca sem direito.
+  - Teste A/B sobre as 544 linhas: **exatamente 2** mudaram, as duas do `_119`. Nenhuma pessoa da planilha de ativos foi afetada — inclusive o `INNOVATIVE_134`, que segue sem direito nos contratos determinados. Totais inalterados: 461 OK, 83 inconsistentes, R$ 135.211,67.
+- **Ainda em aberto:** outras **5** pessoas vindas da planilha de desligados continuam marcadas como "sem direito" so porque a planilha nao informa plano — `ADRIELE FERNANDES DA SILVA`, `ANA CRISTINA APARECIDA TORRES DOS SANTOS`, `EZEQUIAS DE SOUSA NOGUEIRA`, `GABRIELA DE PAULA LUZ` e `JEAN LUCAS DA ROCHA`, de departamentos sem regra propria. Depende de confirmar quais desses departamentos dao direito ao plano.
+- **Dados: 09/2026 reprocessado.** Backup em `backups/historico_antes_reproc_09-2026_v7.db`.
+
+### V1.24.1 - 2026-09-22
+- **Correcao: quem foi temporario e depois efetivado vinha com o contrato ERRADO.** Quando a mesma pessoa tem duas linhas na planilha de desligados (contrato antigo + contrato atual) e a fatura nao traz a matricula da empresa — a Unimed so manda a carteirinha —, o sistema casava pelo nome e ficava com a **ultima linha do arquivo**, que podia ser o contrato velho. Agora vence o **contrato mais recente** (demissao, depois admissao).
+  - Caso real: `GUSTAVO ALEXANDRE NEVES RODRIGUES` aparecia como desligado em **23/02/2023**, empresa 6, BAYER - LAB TEMP_120, matricula 320 — o contrato temporario dele, encerrado ha mais de tres anos. O contrato de verdade e o de matricula **1169**, empresa 2, MONS- LAB UDI_119 TERC, admitido em 24/02/2023 (dia seguinte a saida do temporario) e desligado em **15/09/2026**. Mesmo CPF (700.149.486-05), mesma pessoa, dois contratos.
+  - A inconsistencia em si estava certa: ele foi desligado dentro do periodo e continua na fatura (R$ 343,99, fatura 03 NACIONAL) e na compra — a exclusao junto a Unimed procede. O que estava errado era a **data, a empresa, o departamento e a matricula** mostrados, que faziam parecer cobranca arrastada desde 2023.
+  - Conferido linha a linha contra a auditoria anterior: das **544** linhas de 09/2026, **so a dele** mudou.
+- **Dados: 09/2026 reprocessado.** Backup em `backups/historico_antes_reproc_09-2026_v6.db`.
+
+### V1.24.0 - 2026-09-11
+- **Correcao (leitura da planilha): a coluna "Plano de Saude" nunca era lida.** A elegibilidade saia so da coluna **"Valor Plano de Saude"**, onde o marcador vinha grudado no numero (`"468,00  - Imediato"`). Corrigir a coluna de texto — que e onde a informacao deveria estar — nao surtia efeito nenhum. Agora o **texto manda**, e o valor continua valendo quando a coluna de texto nao existe ou nada diz (planilhas antigas, outros clientes). Na planilha de 09/2026 as duas colunas discordavam em **63 linhas**: o texto dizia "apos experiencia" e o valor, nada.
+- **Correcao: o padrao do departamento sobrepunha a planilha.** A regra "INDETERMINADO + depto MONS/BREED → adesao imediata" zerava a carencia mesmo quando a planilha dizia "apos experiencia" na linha da pessoa. O que esta escrito na linha dela agora vale mais que o padrao do departamento; os outros 5 do MONS/BREED, que nao pedem experiencia, seguem com adesao imediata.
+  - Efeito conjunto: **4 pessoas** deixaram de ser apontadas como inconsistencia — `ANGELICA BARBOSA LOPES DOS SANTOS` (admissao 01/07, elegivel em **29/09**), `ANTONIO FIORI NETO`, `IAN CARVALHO DE OLIVEIRA` e `RODRIGO FREIRE DE SOUZA`. Todas em periodo de experiencia e corretamente fora da fatura — eram alarmes falsos. OK subiu de 200 para 204.
+- **Correcao: "Dif. Fatura x Contrato" passa a comparar a MENSALIDADE DO TITULAR** com o contrato, e nao o total da fatura. O total soma dependentes e conta medica, entao todo mundo com dependente parecia cobranca a maior: `GERMANO FONSECA GALVAO` aparecia **+R$ 1.228,78** quando a mensalidade dele esta **R$ 23,79 abaixo** do contrato. A leitura ficou limpa: de 106 "acima do contrato" para **36** (265 abaixo, 3 exatos).
+- **Dados: 09/2026 reprocessado** (versao `id=73`) com a planilha de contratos atualizada. Total faturado inalterado: R$ 135.211,67. Backup em `backups/historico_antes_reproc_09-2026_v5.db`.
+
+### V1.23.1 - 2026-09-11
+- **Correcao: a coluna "Justificado" nao virava "Sim" depois de salvar.** A justificativa era gravada no banco corretamente, mas a tabela na tela continuava mostrando "Nao". Causa: o componente da grade trabalha na estrategia `client_wins` — assim que **qualquer celula e editada**, ele passa a **ignorar todo dado novo** vindo do Python (o proprio componente registra no console do navegador: *"Data was edited on Grid. Ignoring further"*). Como a Justificativa e editada na propria grade, a trava ligava e a tela congelava nos valores antigos.
+  - Agora, depois de gravar (salvar edicoes, justificar em lote ou reaplicar modelos), a grade e **remontada** — o unico jeito de soltar essa trava sem perder o que voce digita enquanto edita. Filtro e ordenacao sao preservados na remontagem.
+
+### V1.23.0 - 2026-09-11
+- **Elegibilidade: contrato DETERMINADO deixa de ser "sem direito" para todo mundo.** Alguns contratos determinados tem plano, outros nao — a regra geral ignorava isso e marcava cobranca indevida em quem tinha direito. Agora os departamentos **345**, **363** e os da **BAYER** (via de regra) mantem o direito mesmo com contrato determinado, somando-se aos ja existentes PLANALTINA e 298. O **134** (INNOVATIVE_134) continua **sem** direito, como deve ser.
+- **Novo: excecao individual por cargo.** `MAURO ALVES DA SILVA` e o unico do contrato 292 (TMG) com plano, e e pelo cargo — a planilha diz "Nao" para ele, mas o direito existe. Criada a lista `_EXCECOES_POR_CARGO` (nome + trecho do departamento, para homonimo de outro contrato nao herdar a excecao), avaliada acima de todas as outras regras.
+  - Conferido com teste A/B contra o codigo anterior, sobre as 535 pessoas da planilha: **exatamente 4** mudaram — `CAMILA AQUINO ANDRADE` (345), `MARIA EDUARDA TANAKA LIMA DA SILVA` (363), `ANA LAURA VIEIRA MINATEL` (Bayer 123) e `MAURO ALVES DA SILVA` (292). Nenhuma outra pessoa foi afetada; os 26 da Bayer com contrato "Temporario" continuam seguindo a planilha.
+  - Efeito: as cobrancas de Camila, Maria Eduarda e Mauro deixam de ser apontadas como indevidas. **Ana Laura passou a aparecer como inconsistencia nova** — ela tem direito ao plano mas **nao consta na fatura**, ou seja, pode nao ter sido incluida. Vale conferir.
+- **Novo: coluna "Dif. Fatura x Contrato"** na tela 5 e na exportacao Excel — quanto a Unimed cobra a mais (positivo) ou a menos (negativo) do que o contrato preve. Quem nao esta na fatura fica zerado. Calculada no carregamento, entao vale tambem para auditorias ja salvas, sem reprocessar.
+- **Ordem das colunas fixa.** A ordem arrumada foi promovida para o codigo, entao nao depende mais do arquivo de estado. Arrastar continua funcionando e a nova posicao e gravada; apagar `dados/ordem_colunas_grade_auditoria.json` volta exatamente para a ordem definida.
+- **Dados: 09/2026 reprocessado** (versao `id=72`) para aplicar as regras novas. Total faturado inalterado: R$ 135.211,67. Backup em `backups/historico_antes_reproc_09-2026_v4.db`.
+
+### V1.22.0 - 2026-09-11
+- **Correcao: a ordem das colunas voltou a ser sua.** Na unificacao das telas 5 e 6 a ordem arrumada na antiga tela de Aprovacao (`dados/col_config_aprovacao.json` — Empresa, Departamento, Contrato Adm. ANTES do Funcionario) foi perdida, e por cima disso o arrastar de cabecalho tinha sido travado. Agora: ordem inicial igual a que estava arrumada, **arrastar liberado** de novo, e a posicao escolhida **gravada em disco** (`dados/ordem_colunas_<tela>.json`) — sobrevive a recarregar a pagina e a reiniciar o servico. Coluna nova, que nao existia quando voce arrumou, entra no fim em vez de bagunçar o resto.
+- **Novo: um controle so marca e desmarca todos.** O tique no cabecalho da coluna de selecao marca todas as linhas e, clicado de novo, desmarca todas. Respeita o filtro: "todos" alcanca so o que esta a vista, nunca linha fora da tela.
+- Mudanca: **Status** passa a ficar ao lado de **Empresa**, no comeco da tabela.
+
 ### V1.21.0 - 2026-09-10
 - **Removido o aviso de "Sistema atualizado"** (introduzido no V1.19.0). Saiu o pop-up, o botao "Novidades desta versao" na chapa do menu e o arquivo de estado `dados/versao_vista.json`. A versao continua visivel no rodape do menu. Aguardando nova especificacao para refazer.
 
