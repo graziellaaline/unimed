@@ -195,3 +195,96 @@ body.dp-com-aviso-versao { padding-top: 48px; }
 .dp-login-aviso { margin: 12px 0 0; font-size: 11.5px; color: #AFC7D5; text-align: center; line-height: 1.45; }
 .dp-login-aviso a, .dp-login-link { color: #D6E7F1; text-decoration: underline; }
 .dp-login-lembrar { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: #D6E4EC; }
+
+/* Filtro de coluna — A→Z com caixa seletora (tabela com class="dp-filtravel"). */
+.dp-filtro-th { white-space: nowrap; }
+.dp-filtro-bt {
+  margin-left: 6px; padding: 0 5px; border: 1px solid rgba(255,255,255,.45); border-radius: 6px;
+  background: transparent; color: inherit; font: inherit; font-size: 12px; line-height: 18px;
+  cursor: pointer; vertical-align: middle;
+}
+.dp-filtro-bt:hover { background: rgba(255,255,255,.18); }
+.dp-filtro-bt.ativo { background: #FFFFFF; color: #005584; border-color: #FFFFFF; }
+.dp-filtro-painel {
+  position: absolute; z-index: 100000; width: min(300px, calc(100vw - 16px));
+  background: #FFFFFF; color: #1E2A3A; border: 1px solid #E3E8EE; border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(16, 24, 40, .18); padding: 10px;
+  font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif; font-size: 14px;
+  text-align: left; font-weight: normal;
+}
+.dp-filtro-ordem { display: flex; gap: 6px; margin-bottom: 8px; }
+.dp-filtro-ordem button {
+  flex: 1; padding: 6px; border: 1px solid #A7C6D5; border-radius: 8px; background: #fff;
+  color: #005584; font: inherit; cursor: pointer;
+}
+.dp-filtro-ordem button:hover { background: #E6EEF3; }
+.dp-filtro-busca {
+  width: 100%; box-sizing: border-box; padding: 7px 9px; margin-bottom: 6px;
+  border: 1px solid #A7C6D5; border-radius: 8px; font: inherit;
+}
+.dp-filtro-todos { display: flex; gap: 6px; padding: 4px 2px 6px; border-bottom: 1px solid #E3E8EE; cursor: pointer; }
+.dp-filtro-lista { max-height: 240px; overflow: auto; padding: 4px 0; }
+.dp-filtro-lista label { display: flex; gap: 6px; align-items: flex-start; padding: 3px 2px; cursor: pointer; }
+.dp-filtro-lista label:hover { background: #F4F7F9; }
+.dp-filtro-acoes { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.dp-filtro-acoes .dp-btn { padding: 6px 14px; font-size: 14px; }
+table.dp-filtravel tr.dp-zebra td { background: #F7FAFC; }
+
+/* Feedback — chip no canto + janela com abas (servidor: feedback_web.py). */
+.dp-fb-chip {
+  position: fixed; right: 18px; bottom: 18px; z-index: 99990;
+  padding: 10px 18px; border: 0; border-radius: 999px; cursor: pointer;
+  background: #005584; color: #fff; box-shadow: 0 8px 22px rgba(1, 32, 77, .30);
+  font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif; font-size: 15px; font-weight: 600;
+}
+.dp-fb-chip:hover { background: #01204D; }
+.dp-fb-badge {
+  position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 999px; background: #D03B3B; color: #fff; font-size: 12px; line-height: 20px;
+  text-align: center; box-shadow: 0 0 0 2px #fff;
+}
+.dp-fb-janela {
+  width: min(640px, 100%); max-height: 86vh; display: flex; flex-direction: column;
+  background: #fff; color: #1E2A3A; border-radius: 14px; border: 1px solid #E3E8EE;
+  box-shadow: 0 24px 60px rgba(1, 32, 77, .35); padding: 18px 20px;
+  font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif; font-size: 15px;
+}
+.dp-fb-topo { display: flex; justify-content: space-between; align-items: center; }
+.dp-fb-topo h2 { margin: 0; font-size: 20px; color: #005584; }
+.dp-fb-x { border: 0; background: none; font-size: 26px; line-height: 1; cursor: pointer; color: #5B6675; }
+.dp-fb-abas { display: flex; gap: 4px; margin: 12px 0 10px; border-bottom: 1px solid #E3E8EE; }
+.dp-fb-abas button {
+  border: 0; background: none; padding: 8px 12px; cursor: pointer; font: inherit; color: #5B6675;
+  border-bottom: 3px solid transparent;
+}
+.dp-fb-abas button.ativa { color: #005584; border-bottom-color: #005584; font-weight: 600; }
+.dp-fb-conta { background: #D03B3B; color: #fff; border-radius: 999px; padding: 0 6px; font-size: 12px; }
+.dp-fb-corpo { overflow: auto; }
+.dp-fb-tipos { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 8px; }
+.dp-fb-tipos label { display: flex; gap: 6px; cursor: pointer; }
+.dp-fb-texto {
+  width: 100%; box-sizing: border-box; min-height: 110px; padding: 9px 10px; margin: 4px 0 8px;
+  border: 1px solid #A7C6D5; border-radius: 10px; font: inherit; resize: vertical;
+}
+.dp-fb-print { border: 2px dashed #A7C6D5; border-radius: 10px; padding: 10px; color: #5B6675; }
+.dp-fb-print:focus { outline: 2px solid #005584; }
+.dp-fb-arquivo { color: #005584; text-decoration: underline; cursor: pointer; }
+.dp-fb-previa img { max-height: 120px; max-width: 100%; margin-top: 8px; border-radius: 8px; border: 1px solid #E3E8EE; }
+.dp-fb-previa button { margin-left: 8px; padding: 4px 10px; font-size: 13px; }
+.dp-fb-nota { color: #8A95A5; font-size: 13px; margin: 6px 0; }
+.dp-fb-item { border: 1px solid #E3E8EE; border-left: 4px solid #A7C6D5; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.dp-fb-item.dp-fb-aberto { border-left-color: #FAB219; }
+.dp-fb-item.dp-fb-em_andamento { border-left-color: #005584; }
+.dp-fb-item.dp-fb-resolvido { border-left-color: #0CA30C; }
+.dp-fb-cab { display: flex; justify-content: space-between; gap: 8px; }
+.dp-fb-st { font-size: 13px; color: #005584; }
+.dp-fb-desc { white-space: pre-wrap; margin: 4px 0; }
+.dp-fb-mini { max-height: 90px; max-width: 160px; border-radius: 6px; border: 1px solid #E3E8EE; margin: 4px 0; }
+.dp-fb-resp { background: #F2F6F9; border-radius: 8px; padding: 8px 10px; margin-top: 6px; white-space: pre-wrap; }
+.dp-fb-item details { margin-top: 8px; }
+.dp-fb-item summary { cursor: pointer; color: #005584; }
+.dp-fb-linha { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dp-fb-linha select, .dp-fb-linha input {
+  padding: 7px 9px; border: 1px solid #A7C6D5; border-radius: 8px; font: inherit;
+}
+@media print { .dp-fb-chip { display: none; } }
