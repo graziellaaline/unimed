@@ -3,3 +3,6 @@ streamlit-aggrid>=1.2.1
 pandas>=2.0.0
 openpyxl>=3.1.0
 xlrd>=2.0.1
+
+# Conferências automáticas (tests/) — a esteira de publicação roda antes de subir
+pytest==8.3.4
