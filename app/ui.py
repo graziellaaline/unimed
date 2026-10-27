@@ -51,7 +51,13 @@ def _componentes_html() -> str:
     if not (_STATIC / "dp-componentes.js").exists():
         return ""
     v = _BOOT_VERSAO
-    return (f'<link rel="stylesheet" href="/app/static/dp-componentes.css?v={v}">'
+    # O st.html descarta <link>: sem o CSS do kit o toast de progresso nascia sem
+    # estilo, no rodapé fora da tela. O script pendura a folha no <head>, uma vez.
+    css = f"/app/static/dp-componentes.css?v={v}"
+    return ("<script>(function(){var h=" + repr(css) + ";"
+            "if(document.querySelector('link[href=\"'+h+'\"]'))return;"
+            "var l=document.createElement('link');l.rel='stylesheet';l.href=h;"
+            "document.head.appendChild(l);})();</script>"
             f"<script>window.DP_VERSAO_URL = {_VERSAO_URL!r};</script>"
             f'<script src="/app/static/dp-componentes.js?v={v}"></script>')
 
@@ -116,6 +122,33 @@ _ESTILO = """
   --bom-fraco: rgba(109, 190, 115, .13); --atencao-fraco: rgba(224, 160, 48, .13);
   --risco-fraco: rgba(233, 112, 112, .13); --info-fraco: rgba(111, 168, 220, .13);
   --marca-fraco: rgba(111, 168, 220, .12);
+}
+
+/* ── Fundo da casa: o mesmo do Portal (8080) atrás de tudo (05/10/2026) ───────
+   Pedido dela: "quero o fundo em tudo". Azul Setrata, brilhos e grade fina;
+   os miolos do Streamlit ficam transparentes. */
+.stApp {
+  background-color: #013A68 !important;
+  background-image:
+    radial-gradient(1100px 600px at 80% 0%, rgba(167, 198, 213, 0.30), transparent 60%),
+    radial-gradient(900px 500px at 10% 100%, rgba(1, 32, 77, 0.35), transparent 65%),
+    radial-gradient(700px 400px at 50% 45%, rgba(255, 255, 255, 0.06), transparent 70%),
+    linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(180deg, #005584 0%, #013A68 70%) !important;
+  background-size: auto, auto, auto, 44px 44px, 44px 44px, auto !important;
+  background-attachment: fixed !important;
+}
+[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stHeader"],
+[data-testid="stBottomBlockContainer"] { background: transparent !important; }
+/* O conteúdo do Streamlit não vem em cards — fica solto na página. Sobre o azul,
+   ele ganha UM painel branco (o "card" da tela inteira), com o azul à volta. */
+[data-testid="stMainBlockContainer"], .block-container {
+  background: #FFFFFF;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(1, 32, 77, .25);
+  margin-top: 24px;
+  margin-bottom: 24px;
 }
 
 /* ── Casca do menu (.dp-casca do kit): azul Setrata com brilho e grade ─────── */

@@ -12,6 +12,23 @@
 
 ## Histórico
 
+### V1.29.2 - 2026-10-21
+- Correção: **LILIAN APARECIDA DE MORAES** (matrícula 60, empresa 4) aparecia com demissão em 19/08/2026, que era do MARCO ANTONIO RODRIGUES DE SOUZA (matrícula 60, **empresa 3**, admitido no mesmo dia). A regra que reconhece troca de nome (mesma matrícula + mesma admissão) não olhava a empresa. Agora exige também a mesma empresa e o mesmo primeiro nome. A troca de nome legítima continua valendo (LETICIA BARBON VITORINI → ...VITORINI HUHN). 10/2026 reprocessado.
+
+### V1.29.1 - 2026-10-21
+- **Justificativas recorrentes voltam a ser reaproveitadas.** Em 10/2026 só 2 de 81 vieram preenchidas: o mês entrou como "SETRATA" e o histórico estava como "Setrata", e a comparação exigia o texto idêntico, com os R$ dentro. Agora: cliente sem diferença de maiúsculas, e casa a mesma pessoa com a mesma inconsistência, ignorando os valores que mudam todo mês. Em 10/2026: 53 de 81 já vêm justificadas.
+- Justificativa que só vale para o mês dela ("Admissão/Rescisão na referência da fatura") não é herdada para o mês seguinte.
+
+### V1.29.0 - 2026-10-21
+- **Filtros que conversam entre si (como no Excel).** O funil de cada coluna agora lista só os valores das linhas que sobraram pelos filtros das outras colunas. Ex.: filtrando Justificado = Não, o funil de Tipo Inconsistência não mostra mais "desligado na fatura" se todos esses já foram justificados. Vale para todas as tabelas do sistema.
+- Tipo de inconsistência "Direito sem fatura" passa a se chamar **"Tem direito, fora da fatura"** (a pessoa tem direito ao plano mas não consta na fatura). Auditorias antigas mostram o nome novo sem serem reprocessadas.
+
+### V1.28.2 - 2026-10-21
+- Correção: o toast de progresso do processamento (e os avisos do kit) voltou a aparecer. A folha de estilo do kit DP Setrata não estava carregando, e o aviso ficava sem estilo, fora da tela.
+
+### V1.28.1 - 2026-10-05
+- Fundo: o mesmo azul do Portal (8080) atrás de todas as telas, com o conteúdo em cards e painéis brancos por cima.
+
 ### V1.28.0 - 2026-09-28
 - **Barra de progresso no processamento.** Processar e reprocessar a auditoria agora mostram a barra do kit DP Setrata com a etapa em andamento, "3 de 8", porcentagem e tempo (lendo contratos, faturas, compra, cruzando, desligados, regras, salvando, justificativas) — no lugar do "Processando…" parado.
 - Ao terminar aparece "concluído em Ns"; se der erro, o aviso vermelho com o motivo. Componente `Progresso` em `app/ui.py`.
@@ -43,7 +60,7 @@
 
 ### V1.24.1 - 2026-09-22
 - **Correcao: quem foi temporario e depois efetivado vinha com o contrato ERRADO.** Quando a mesma pessoa tem duas linhas na planilha de desligados (contrato antigo + contrato atual) e a fatura nao traz a matricula da empresa — a Unimed so manda a carteirinha —, o sistema casava pelo nome e ficava com a **ultima linha do arquivo**, que podia ser o contrato velho. Agora vence o **contrato mais recente** (demissao, depois admissao).
-  - Caso real: `GUSTAVO ALEXANDRE NEVES RODRIGUES` aparecia como desligado em **23/02/2023**, empresa 6, BAYER - LAB TEMP_120, matricula 320 — o contrato temporario dele, encerrado ha mais de tres anos. O contrato de verdade e o de matricula **1169**, empresa 2, MONS- LAB UDI_119 TERC, admitido em 24/02/2023 (dia seguinte a saida do temporario) e desligado em **15/09/2026**. Mesmo CPF (700.149.486-05), mesma pessoa, dois contratos.
+  - Caso real: `GUSTAVO ALEXANDRE NEVES RODRIGUES` aparecia como desligado em **23/02/2023**, empresa 6, BAYER - LAB TEMP_120, matricula 320 — o contrato temporario dele, encerrado ha mais de tres anos. O contrato de verdade e o de matricula **1169**, empresa 2, MONS- LAB UDI_119 TERC, admitido em 24/02/2023 (dia seguinte a saida do temporario) e desligado em **15/09/2026**. Mesmo CPF (***.149.486-**), mesma pessoa, dois contratos.
   - A inconsistencia em si estava certa: ele foi desligado dentro do periodo e continua na fatura (R$ 343,99, fatura 03 NACIONAL) e na compra — a exclusao junto a Unimed procede. O que estava errado era a **data, a empresa, o departamento e a matricula** mostrados, que faziam parecer cobranca arrastada desde 2023.
   - Conferido linha a linha contra a auditoria anterior: das **544** linhas de 09/2026, **so a dele** mudou.
 - **Dados: 09/2026 reprocessado.** Backup em `backups/historico_antes_reproc_09-2026_v6.db`.

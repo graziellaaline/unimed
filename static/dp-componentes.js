@@ -13,6 +13,7 @@
 
    O que oferece (window.DP):
      DP.toast(msg, tipo, prender)   tipo: ok | err | aviso | info | progress
+                                    (fecha com clique no aviso ou Esc, menos a barra andando)
      Ponte Dash: <div class="dp-aviso" data-tipo data-msg …> na página vira toast
      DP.fase(texto)                 texto da etapa dentro da barra
      DP.fechar()                    esconde o aviso agora (fim de trabalho longo)
@@ -21,6 +22,7 @@
          pergunta ao servidor a cada 0,7s: {rodando, porcentagem, fase, feitos,
          total, decorrido_s, erro} e anima a barra ("3 de 10 — 30% · 12s")
      DP.confirmar(pergunta, {sim, nao, perigo}) -> Promise<boolean>
+     DP.avisar(mensagem, {ok}) -> Promise   aviso com um botão só ("OK")
          pergunta Sim/Não antes de ação que apaga/substitui (regra da casa)
      Filtro de coluna (A→Z com caixa seletora): automático em <table class="dp-filtravel">
          cada cabeçalho ganha ▾ -> A→Z / Z→A, busca, "Selecionar tudo" e a lista de
@@ -52,12 +54,26 @@
       t.className = "dp-toast";
       t.setAttribute("role", "status");
       t.setAttribute("aria-live", "polite");
-      t.innerHTML = '<div class="dp-toast-texto"></div>' +
+      t.innerHTML = '<button type="button" class="dp-toast-x" aria-label="Fechar" ' +
+        'title="Fechar">×</button><div class="dp-toast-texto"></div>' +
         '<div class="dp-toast-prog"><div class="dp-toast-trilho"><span></span></div>' +
         '<div class="dp-toast-fase"></div></div>';
+      // Fecha com um clique ou Esc (22/10/2026: o aviso de erro fica preso para dar
+      // tempo de ler e não tinha como tirar da tela). Barra andando não fecha.
+      t.addEventListener("click", function () { fecharAviso(); });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") fecharAviso();
+      });
       document.body.appendChild(t);
     }
     return t;
+  }
+
+  function fecharAviso() {
+    var t = document.getElementById("dp-toast");
+    if (!t || t.className.indexOf("mostra") < 0 || t.className.indexOf("dp-t-progress") >= 0) return;
+    if (_timer) { clearTimeout(_timer); _timer = null; }
+    t.className = "dp-toast";
   }
 
   var TIPOS = { ok: "ok", sucesso: "ok", err: "err", erro: "err",
@@ -177,6 +193,34 @@
       document.addEventListener("keydown", tecla);
       document.body.appendChild(fundo);
       fundo.querySelector('[data-r="0"]').focus();        // o padrão seguro é o "Não"
+    });
+  }
+
+  // Aviso que pede só "OK" (05/10/2026): para avisar algo que a pessoa precisa
+  // ler antes de seguir, sem escolha a fazer. Mesmo visual da pergunta Sim/Não.
+  function avisar(mensagem, opcoes) {
+    opcoes = opcoes || {};
+    return new Promise(function (resolver) {
+      var fundo = document.createElement("div");
+      fundo.className = "dp-confirma-fundo";
+      fundo.innerHTML =
+        '<div class="dp-confirma" role="alertdialog" aria-modal="true">' +
+          '<p class="dp-confirma-texto"></p>' +
+          '<div class="dp-confirma-acoes">' +
+            '<button type="button" class="dp-btn" data-r="1"></button>' +
+          "</div></div>";
+      fundo.querySelector(".dp-confirma-texto").textContent = mensagem;
+      fundo.querySelector('[data-r="1"]').textContent = opcoes.ok || "OK";
+      function fechar() {
+        document.removeEventListener("keydown", tecla);
+        fundo.remove();
+        resolver(true);
+      }
+      function tecla(e) { if (e.key === "Escape" || e.key === "Enter") fechar(); }
+      fundo.querySelector('[data-r="1"]').addEventListener("click", fechar);
+      document.addEventListener("keydown", tecla);
+      document.body.appendChild(fundo);
+      fundo.querySelector('[data-r="1"]').focus();
     });
   }
 
@@ -326,9 +370,12 @@
     var v = td.getAttribute("data-v");
     return (v != null ? v : td.textContent).replace(/\s+/g, " ").trim();
   }
-  // "1.234" "12,5%" "12:30" "-3:05" "8,2 h" viram número; o resto é texto.
+  // "1.234" "12,5%" "12:30" "-3:05" "8,2 h" "R$ 1.234,56" e "25/03/2024" viram
+  // número (a data como aaaammdd, para ordenar no tempo); o resto é texto.
   function comoNumero(t) {
-    var s = String(t).replace(/\s|%|h$/gi, "");
+    var d = String(t).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (d) return Number(d[3] + d[2] + d[1]);
+    var s = String(t).replace(/\s|%|h$|R\$/gi, "");
     var m = s.match(/^(-)?(\d+):(\d{2})$/);
     if (m) return (m[1] ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
     if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(s) || /^-?\d+(,\d+)?$/.test(s))
@@ -640,7 +687,7 @@
     toast: toast, fase: fase, porcentagem: porcentagem,
     acompanhar: acompanhar, parar: pararAcompanhamento,
     fechar: function () { pararAcompanhamento(); caixa().className = "dp-toast"; },
-    confirmar: confirmar, novidades: mostrarNovidades,
+    confirmar: confirmar, avisar: avisar, novidades: mostrarNovidades,
     filtrarTabelas: filtrarTabelas,
     feedback: function () { if (fbEu) fbAbrir(); }
   };

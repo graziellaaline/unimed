@@ -14,7 +14,7 @@
   border: 1px solid rgba(167, 198, 213, .25);
   border-left: 4px solid #A7C6D5;
   border-radius: 10px;
-  padding: 12px 20px;
+  padding: 12px 30px 12px 20px;
   font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif;
   font-size: 15px; line-height: 1.4; text-align: center;
   white-space: pre-wrap; word-break: break-word;
@@ -22,7 +22,17 @@
   opacity: 0; pointer-events: none; z-index: 100000;
   transition: opacity .2s ease, transform .2s ease;
 }
-.dp-toast.mostra   { opacity: 1; transform: translateX(-50%) translateY(0); }
+.dp-toast.mostra   { opacity: 1; transform: translateX(-50%) translateY(0);
+                     pointer-events: auto; cursor: pointer; }
+.dp-toast.dp-t-progress { cursor: default; }
+/* Fechar: clique em qualquer lugar do aviso ou Esc; o × só mostra que dá. */
+.dp-toast-x {
+  position: absolute; top: 4px; right: 6px;
+  background: none; border: 0; padding: 0 4px; cursor: pointer;
+  color: #A7C6D5; font: 18px/1 "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif;
+}
+.dp-toast-x:hover { color: #F2F6F9; }
+.dp-toast.dp-t-progress .dp-toast-x { display: none; }
 .dp-toast.dp-t-ok       { border-left-color: #0CA30C; }
 .dp-toast.dp-t-err      { border-left-color: #D03B3B; }
 .dp-toast.dp-t-info     { border-left-color: #A7C6D5; }
@@ -126,14 +136,16 @@ body.dp-com-aviso-versao { padding-top: 48px; }
   display: flex; align-items: center; justify-content: center; padding: 16px;
   font-family: "Calibri Light", Calibri, Carlito, "Segoe UI", sans-serif; font-size: 15px;
   color: #e8eef7;
+  /* O mesmo fundo do Portal (8080, vitrine.css). */
   background-color: #013A68;
   background-image:
-    radial-gradient(1100px 600px at 78% 8%, rgba(167, 198, 213, 0.30), transparent 60%),
-    radial-gradient(900px 500px at 12% 100%, rgba(1, 32, 77, 0.35), transparent 65%),
+    radial-gradient(1100px 600px at 80% 0%, rgba(167, 198, 213, 0.30), transparent 60%),
+    radial-gradient(900px 500px at 10% 100%, rgba(1, 32, 77, 0.35), transparent 65%),
+    radial-gradient(700px 400px at 50% 45%, rgba(255, 255, 255, 0.06), transparent 70%),
     linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
-    linear-gradient(180deg, #005584 0%, #013A68 75%);
-  background-size: auto, auto, 44px 44px, 44px 44px, auto;
+    linear-gradient(180deg, #005584 0%, #013A68 70%);
+  background-size: auto, auto, auto, 44px 44px, 44px 44px, auto;
 }
 .dp-login-tela *, .dp-login-tela *::before, .dp-login-tela *::after { box-sizing: border-box; }
 .dp-login-cartao {
@@ -288,3 +300,24 @@ table.dp-filtravel tr.dp-zebra td { background: #F7FAFC; }
   padding: 7px 9px; border: 1px solid #A7C6D5; border-radius: 8px; font: inherit;
 }
 @media print { .dp-fb-chip { display: none; } }
+
+/* ── Fundo da casa: o MESMO fundo do Portal (8080, vitrine.css) atrás de TUDO ──
+   Pedido dela (05/10/2026): "quero o fundo em tudo" — login, menus e telas de
+   trabalho. Azul Setrata com brilhos e a grade fina de 44px, sem imagem. Cards
+   continuam brancos por cima; quem pinta o miolo de cor lisa tampa o fundo e
+   precisa ficar transparente no CSS do próprio sistema. Texto solto direto
+   sobre o fundo (títulos de página) precisa ser claro. */
+html { background: #013A68; }
+body {
+  background-color: #013A68 !important;
+  background-image:
+    radial-gradient(1100px 600px at 80% 0%, rgba(167, 198, 213, 0.30), transparent 60%),
+    radial-gradient(900px 500px at 10% 100%, rgba(1, 32, 77, 0.35), transparent 65%),
+    radial-gradient(700px 400px at 50% 45%, rgba(255, 255, 255, 0.06), transparent 70%),
+    linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(180deg, #005584 0%, #013A68 70%) !important;
+  background-size: auto, auto, auto, 44px 44px, 44px 44px, auto !important;
+  background-attachment: fixed !important;
+  min-height: 100vh;
+}

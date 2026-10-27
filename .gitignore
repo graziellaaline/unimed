@@ -36,3 +36,6 @@ Thumbs.db
 
 # Gerado na subida por app/ui.py (aviso de versão do kit DP Setrata)
 static/_versao-app.json
+
+# Versoes antigas guardadas a mao
+_antigos/

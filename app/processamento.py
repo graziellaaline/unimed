@@ -1291,6 +1291,17 @@ def _inativo_por_nome_estendido(audit_nn: str, nome_map: dict):
     return nome_map[achados[0]] if len(achados) == 1 else None
 
 
+def _chave_empresa(valor) -> str:
+    """Código de empresa comparável: "4", "4.0" e " 04 " viram "4"."""
+    t = str(valor or "").strip()
+    if t.lower() in ("nan", "none"):
+        return ""
+    try:
+        return str(int(float(t.replace(",", "."))))
+    except ValueError:
+        return t.upper()
+
+
 def mesclar_desligados(
     df_audit: pd.DataFrame,
     df_inativos: "pd.DataFrame | None",
@@ -1377,10 +1388,19 @@ def mesclar_desligados(
                 # Nome diferente com a mesma matrícula: só é a mesma pessoa se a
                 # data de admissão bater (mudança de nome). Sem isso, quem casa
                 # e depois é demitida ficaria para sempre sem Dt. Demissão.
+                # A matrícula se repete entre empresas: a LILIAN (60, empresa 4)
+                # herdou a demissão do MARCO ANTONIO (60, empresa 3, mesma
+                # admissão) — 21/10/2026. Por isso exige também a mesma empresa e
+                # o mesmo primeiro nome (casar muda o sobrenome, não o nome).
                 adm_audit = _fmt_data(arow.get("Dt. Admissão", ""))
+                emp_audit = _chave_empresa(arow.get("Empresa", ""))
+                nome1_audit = audit_nn.split()[0]
                 if adm_audit:
                     for cand in cod_map.get(cod_func_chave(audit_mat), []):
-                        if _fmt_data(cand.get("admissao", "")) == adm_audit:
+                        cand_nn = str(cand.get("_norm_func", "") or "").split()
+                        if (_fmt_data(cand.get("admissao", "")) == adm_audit
+                                and _chave_empresa(cand.get("empresa", "")) == emp_audit
+                                and cand_nn and cand_nn[0] == nome1_audit):
                             irow_matched = cand
                             break
         elif bool(arow.get("_sem_contrato", False)):

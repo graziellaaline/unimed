@@ -8,6 +8,9 @@ Substitui os `selectbox`/`multiselect` que ficavam acima das tabelas. O filtro
 o painel é implementado aqui em JavaScript: ordenar A→Z / Z→A, buscar,
 "Selecionar tudo", lista de checkboxes e botões Limpar / OK.
 
+Os filtros conversam (como no Excel): a lista de uma coluna mostra só os
+valores das linhas que passam nos filtros das OUTRAS colunas.
+
 Filtro e ordenação rodam no navegador — a página não recarrega a cada clique.
 """
 from __future__ import annotations
@@ -67,7 +70,13 @@ class {
 
     carregarValores() {
         const vistos = new Set();
-        this.p.api.forEachLeafNode((n) => { vistos.add(this.texto(this.p.getValue(n))); });
+        const meu = this.p.column.getColId();
+        const modelo = this.p.api.getFilterModel() || {};
+        const outros = Object.keys(modelo).filter((c) => c !== meu && modelo[c] && modelo[c].valores).map((c) => [c, new Set(modelo[c].valores)]);
+        this.p.api.forEachLeafNode((n) => {
+            const passa = outros.every((o) => o[1].has(this.texto(this.p.api.getCellValue({ rowNode: n, colKey: o[0] }))));
+            if (passa) { vistos.add(this.texto(this.p.getValue(n))); }
+        });
         this.valores = Array.from(vistos).sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }));
         this.pend = this.aplicado === null ? new Set(this.valores) : new Set(this.aplicado);
     }
@@ -118,7 +127,7 @@ class {
     }
 
     aplicar() {
-        this.aplicado = this.pend.size === this.valores.length ? null : new Set(this.pend);
+        this.aplicado = this.valores.every((v) => this.pend.has(v)) ? null : new Set(this.pend);
         this.p.filterChangedCallback();
         this.fechar();
     }

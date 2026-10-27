@@ -148,7 +148,7 @@ def aplicar_regras(df: pd.DataFrame) -> pd.DataFrame:
         if tem_direito == "Sim" and not na_fatura and not desligado:
             inc.append("Tem direito ao plano mas não consta na fatura Unimed")
             acoes.append("Verificar inclusão junto à Unimed")
-            tipos.append("Direito sem fatura")
+            tipos.append("Tem direito, fora da fatura")
 
         # R2 — Tem direito, está na fatura, mas não está na compra
         if tem_direito == "Sim" and na_fatura and not na_compra:

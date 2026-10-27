@@ -4,6 +4,7 @@ Persistência em SQLite: histórico de auditorias + justificativas + mapeamentos
 """
 import io
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -98,6 +99,9 @@ def salvar_auditoria(df: pd.DataFrame, stats: dict,
     return rowid
 
 
+TIPOS_RENOMEADOS = {"Direito sem fatura": "Tem direito, fora da fatura"}
+
+
 def carregar_auditoria(periodo: str, cliente: str = "") -> tuple:
     con = _conn()
     cur = con.cursor()
@@ -116,6 +120,12 @@ def carregar_auditoria(periodo: str, cliente: str = "") -> tuple:
         df = pd.read_json(io.StringIO(df_json), orient="records") if df_json else pd.DataFrame()
     except Exception:
         df = pd.DataFrame()
+    # Nomes de tipo trocados depois (21/10/2026): auditorias antigas continuam
+    # gravadas como estavam; só o nome mostrado na tela é o novo.
+    if "Tipo Inconsistência" in df.columns:
+        for antigo, novo in TIPOS_RENOMEADOS.items():
+            df["Tipo Inconsistência"] = df["Tipo Inconsistência"].map(
+                lambda v, a=antigo, n=novo: v.replace(a, n) if isinstance(v, str) else v)
     stats = json.loads(stats_json) if stats_json else {}
     meta  = {"id": aid, "aprovado": bool(aprovado),
              "aprovado_em": aprovado_em, "processado_em": proc_em}
@@ -220,6 +230,27 @@ def carregar_arquivos_auditoria(auditoria_id: int) -> dict:
 # Justificativas
 # ---------------------------------------------------------------------------
 
+def chave_inconsistencia(descricao: str) -> str:
+    """Mesma inconsistência de mês para mês: o texto sem os valores, que mudam
+    todo mês ("Valor empresa (R$ 739.24) difere do contrato (R$ 450.00)")."""
+    t = re.sub(r"\d+(?:[.,]\d+)*", "#", str(descricao or "").lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+# Justificativa presa ao mês em que foi escrita ("Admissão na referência da
+# fatura") não passa para o mês seguinte: lá o problema já é outro.
+_SO_DO_MES = re.compile(r"refer[eê]ncia da fatura|m[eê]s de refer[eê]ncia", re.I)
+
+
+def justificativa_herdavel(justificativa: str) -> bool:
+    return bool(str(justificativa or "").strip()) and not _SO_DO_MES.search(justificativa)
+
+
+# Cliente compara sem maiúscula/espaço: 10/2026 entrou como "SETRATA" e os
+# modelos estavam como "Setrata" — a herança não achava nada (21/10/2026).
+_MESMO_CLIENTE = "(UPPER(TRIM(cliente))=UPPER(TRIM(?)) OR cliente='')"
+
+
 def migrar_justificativas(novo_id: int, periodo: str, cliente: str = ""):
     """
     Pré-popula justificativas do novo audit_id a partir de duas fontes, em ordem:
@@ -238,7 +269,8 @@ def migrar_justificativas(novo_id: int, periodo: str, cliente: str = ""):
 
     # ── Fonte 1: mesmo período (reprocessamento) ──────────────────────────────
     cur.execute(
-        "SELECT id FROM auditorias WHERE periodo=? AND (cliente=? OR ?='') AND id != ? "
+        "SELECT id FROM auditorias WHERE periodo=? "
+        "AND (UPPER(TRIM(cliente))=UPPER(TRIM(?)) OR ?='') AND id != ? "
         "ORDER BY processado_em DESC LIMIT 1",
         (periodo, cliente or "", cliente or "", novo_id),
     )
@@ -253,12 +285,27 @@ def migrar_justificativas(novo_id: int, periodo: str, cliente: str = ""):
         fontes = cur.fetchall()
     else:
         # ── Fonte 2: modelos persistidos de meses anteriores ─────────────────
+        # Só herda quem tem a MESMA inconsistência neste mês (valores à parte):
+        # justificativa de um problema não serve para outro.
         cur.execute(
             "SELECT funcionario, descricao, justificativa FROM justificativas_modelo "
-            "WHERE (cliente=? OR cliente='') ORDER BY atualizado_em DESC",
+            f"WHERE {_MESMO_CLIENTE} ORDER BY atualizado_em DESC",
             (cliente or "",),
         )
-        fontes = cur.fetchall()
+        modelos = cur.fetchall()
+        cur.execute("SELECT df_json FROM auditorias WHERE id=?", (novo_id,))
+        r = cur.fetchone()
+        try:
+            atual = pd.read_json(io.StringIO(r[0]), orient="records") if r and r[0] else pd.DataFrame()
+        except Exception:
+            atual = pd.DataFrame()
+        pend = {}
+        if {"Status", "Funcionário", "Inconsistência"} <= set(atual.columns):
+            for _, lin in atual[atual["Status"] == "Inconsistente"].iterrows():
+                pend[str(lin["Funcionário"])] = str(lin["Inconsistência"] or "")
+        fontes = [(f, pend[f], j) for f, d, j in modelos
+                  if f in pend and justificativa_herdavel(j)
+                  and chave_inconsistencia(d) == chave_inconsistencia(pend[f])]
 
     vistos: set = set()
     for func, desc, just in fontes:
@@ -362,14 +409,16 @@ def carregar_justificativa_modelo(cliente: str, funcionario: str, descricao: str
     con = _conn()
     cur = con.cursor()
     cur.execute(
-        "SELECT justificativa FROM justificativas_modelo "
-        "WHERE (cliente=? OR cliente='') AND funcionario=? AND descricao=? "
-        "ORDER BY CASE WHEN cliente=? THEN 0 ELSE 1 END, atualizado_em DESC LIMIT 1",
-        (cliente or "", funcionario, descricao, cliente or "")
+        "SELECT descricao, justificativa FROM justificativas_modelo "
+        f"WHERE {_MESMO_CLIENTE} AND funcionario=? "
+        "ORDER BY CASE WHEN cliente='' THEN 1 ELSE 0 END, atualizado_em DESC",
+        (cliente or "", funcionario)
     )
-    row = cur.fetchone()
+    linhas = cur.fetchall()
     con.close()
-    return row[0] if row else ""
+    chave = chave_inconsistencia(descricao)
+    return next((j for d, j in linhas
+                 if chave_inconsistencia(d) == chave and justificativa_herdavel(j)), "")
 
 
 # ---------------------------------------------------------------------------
