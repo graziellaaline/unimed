@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR" data-estilo="relevo" data-modo="claro" data-destaque="azul">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Entrar · Auditoria Unimed</title>
+<link rel="manifest" href="/manifest.json?v={{VERSAO}}">
+<link rel="icon" href="/brand/icon-192.png?v={{VERSAO}}">
+<link rel="stylesheet" href="/assets/10-tema.css?v={{VERSAO}}">
+<link rel="stylesheet" href="/static/dp-componentes.css?v={{VERSAO}}">
+<style>
+  html body{min-height:100vh;background:var(--bg-img),var(--bg)!important;background-attachment:fixed;display:grid;place-items:center;padding:16px}
+  .entrada{width:min(420px,100%);display:grid;gap:16px}
+  .marca-topo{display:flex;gap:12px;align-items:center}
+  .marca-topo img{width:52px;height:52px;border-radius:14px;background:#005584}
+  .marca-topo h1{margin:0;font-weight:400;font-size:28px}
+  .olho{position:relative}.olho .inp{padding-right:48px}
+  .olho button{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;cursor:pointer;min-width:40px;min-height:36px;color:var(--txt2)}
+  .ou{display:flex;align-items:center;gap:10px;color:var(--txt3);font-size:13px}.ou::before,.ou::after{content:"";flex:1;height:1px;background:var(--line)}
+  form{display:grid;gap:12px}
+</style>
+</head>
+<body>
+<main class="entrada">
+  <div class="marca-topo"><img src="/brand/icon-192.png?v={{VERSAO}}" alt=""><div><h1>Auditoria Unimed</h1><div class="cap" style="margin:0">DP Setrata · {{VERSAO}}</div></div></div>
+  <div id="erro" class="aviso crit" role="alert" hidden></div>
+  <section class="pn" style="display:grid;gap:14px">
+    <a id="google" class="btn azul larga" href="/_casa/google" hidden>Entrar com a conta Google da Setrata</a>
+    <div id="ou" class="ou" hidden>ou</div>
+    <form id="local" hidden autocomplete="on">
+      <label class="campo">E-mail<input class="inp" id="email" type="email" autocomplete="username" required></label>
+      <label class="campo">Senha<span class="olho"><input class="inp" id="senha" type="password" autocomplete="current-password" required><button type="button" id="ver" aria-label="Mostrar a senha">👁</button></span></label>
+      <button class="btn pri larga" id="entrar" type="submit">Entrar</button>
+    </form>
+    <p id="nada" class="sub" hidden>A entrada deste sistema ainda não foi ligada. Fale com o TI.</p>
+  </section>
+  <details id="porta" class="det" hidden>
+    <summary>Porta de manutenção (TI)</summary>
+    <form id="manut" class="pn">
+      <label class="campo">Usuário<input class="inp" id="musuario" autocomplete="off"></label>
+      <label class="campo">Senha<input class="inp" id="msenha" type="password" autocomplete="off"></label>
+      <button class="btn larga" type="submit">Entrar pela porta</button>
+    </form>
+  </details>
+  <button type="button" class="btn ghost peq" data-tema-modo style="justify-self:start">☾ Modo escuro</button>
+</main>
+<script src="/static/dp-componentes.js?v={{VERSAO}}"></script>
+<script src="/assets/20-tema.js?v={{VERSAO}}"></script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), $ = function (s) { return document.querySelector(s); };
+  function erro(m) { var e = $("#erro"); e.textContent = m; e.hidden = !m; }
+  function postar(url, corpo) {
+    return fetch(url, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.erro || d.detail || "Não deu certo."); return d; }); });
+  }
+  if (q.get("expirado")) erro("Sua sessão terminou. Entre de novo.");
+  fetch("/_casa/config" + (q.get("erro") ? "?erro=" + encodeURIComponent(q.get("erro")) : ""), { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(function (c) {
+      if (c.erro) erro(c.erro);
+      $("#google").hidden = !c.google;
+      $("#local").hidden = !c.senha_local;
+      $("#ou").hidden = !(c.google && c.senha_local);
+      $("#nada").hidden = c.google || c.senha_local;
+      $("#porta").hidden = !c.manutencao;
+    }).catch(function () { erro("O sistema não respondeu. Tente de novo em instantes."); });
+  $("#ver").addEventListener("click", function () {
+    var s = $("#senha"), mostra = s.type === "password"; s.type = mostra ? "text" : "password";
+    this.setAttribute("aria-label", mostra ? "Esconder a senha" : "Mostrar a senha");
+  });
+  $("#local").addEventListener("submit", function (e) {
+    e.preventDefault(); erro("");
+    postar("/_casa/senha", { email: $("#email").value, senha: $("#senha").value })
+      .then(function () { location.href = q.get("volta") && q.get("volta").charAt(0) === "/" ? q.get("volta") : "/"; })
+      .catch(function (x) { erro(x.message); });
+  });
+  $("#manut").addEventListener("submit", function (e) {
+    e.preventDefault(); erro("");
+    postar("/_casa/manutencao", { usuario: $("#musuario").value, senha: $("#msenha").value })
+      .then(function () { location.href = "/"; }).catch(function (x) { erro(x.message); });
+  });
+})();
+</script>
+</body>
+</html>

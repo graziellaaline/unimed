@@ -12,6 +12,15 @@
 
 ## Histórico
 
+### V2.00.00 - 2026-10-29
+- **A Auditoria Unimed agora é Dash, no padrão da casa.** A camada da casa (setrata-casa 0.3.0) cuida do login, da porta de manutenção, do feedback com triagem e do e-mail de acesso. A suíte de contrato da casa passa: 24 conferências.
+- Visual aprovado no mockup: menu em pílula de ícones e tema Vidro ou Relevo, claro ou escuro. Cada pessoa escolhe o seu em "Meu tema"; o administrador define o padrão.
+- As 7 telas de antes, na mesma ordem e com as mesmas regras. O cálculo não mudou.
+- A justificativa escrita na tabela é gravada assim que você sai da célula. O botão "Salvar edições" saiu.
+- O seletor no topo troca a auditoria aberta em todas as telas.
+- Fechar o mês pede confirmação Sim/Não e só libera sem pendência; o servidor confere de novo.
+- Gestão de usuários (só administrador): só entra quem foi cadastrado. Ao cadastrar, sai o e-mail de acesso; o botão "Enviar acesso" reenvia. Para excluir alguém é preciso digitar "excluir".
+
 ### V1.29.2 - 2026-10-21
 - Correção: **LILIAN APARECIDA DE MORAES** (matrícula 60, empresa 4) aparecia com demissão em 19/08/2026, que era do MARCO ANTONIO RODRIGUES DE SOUZA (matrícula 60, **empresa 3**, admitido no mesmo dia). A regra que reconhece troca de nome (mesma matrícula + mesma admissão) não olhava a empresa. Agora exige também a mesma empresa e o mesmo primeiro nome. A troca de nome legítima continua valendo (LETICIA BARBON VITORINI → ...VITORINI HUHN). 10/2026 reprocessado.
 

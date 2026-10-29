@@ -35,53 +35,42 @@ Compara três planilhas mensais e gera um relatório completo de auditoria:
 
 | Tela | Função |
 |------|--------|
-| **1 · Importação** | Carrega os arquivos, detecta as colunas automaticamente e processa |
-| **2 · Auditoria** | Tabela completa com filtros, KPIs e exportação para Excel |
-| **3 · Inclusões do Mês** | Funcionários incluídos no plano no período de referência |
-| **4 · Histórico** | Recarrega qualquer auditoria anterior sem precisar reimportar |
-| **5 · Aprovação** | Justificativa obrigatória para cada pendência antes de fechar o mês |
+| **1 · Importação** | Recebe os arquivos, mostra as colunas encontradas e processa (com barra de andamento) |
+| **2 · Inclusões** | Incluídos no mês e titulares novos em relação ao mês anterior, com o texto para colar |
+| **3 · Exclusões** | Quem saiu da fatura em relação a um mês escolhido |
+| **4 · Exclusões indevidas** | Desligados ainda cobrados e o prejuízo estimado |
+| **5 · Auditoria e Aprovação** | Tabela completa, justificativa na própria célula, lote e fechamento do mês |
+| **6 · Histórico** | Abre qualquer auditoria guardada sem importar de novo |
+| **7 · Análises** | Custos, desvios, inconsistências e a evolução entre os meses |
+| **Gestão de usuários** | Só administrador: quem tem acesso, papel, e-mail de acesso |
+| **Meu tema** | Vidro ou Relevo, claro ou escuro, cor de destaque |
+
+O seletor no topo troca a auditoria aberta em todas as telas.
 
 ---
 
 ## Instalação
 
-### Pré-requisito
-- Python 3.10 ou superior instalado
-
-### Passos
-
-1. Baixe ou clone este repositório
-2. Abra a pasta `auditoria-unimed`
-3. Dê dois cliques em **`instalar.bat`** — instala tudo automaticamente
-4. Após a instalação, dê dois cliques em **`iniciar.bat`** para abrir o sistema
-
-O sistema abre no navegador em `http://localhost:8055`.
-
-> O atalho de inicialização é criado automaticamente na pasta Startup do Windows — o sistema inicia junto com o computador.
+1. Python 3.10+ e acesso à rede da Setrata (o pacote da casa vem da CentralFeedback).
+2. `instalar.bat` (ou `python -m venv venv` + `venv\Scripts\pip install -r requirements.txt`).
+3. `iniciar.bat` (ou `python servidor.py`) — abre em `http://localhost:8055`.
 
 ---
 
-## Como usar
+## Como roda (V2 — Dash, padrão da casa)
 
-### 1. Importe os arquivos
-Na tela **1 · Importação**:
-- Preencha o **mês de referência** (ex: `04/2026`)
-- Carregue a planilha de **Funcionários por Contrato**
-- Carregue as **faturas Unimed** em CSV (pode selecionar várias de uma vez)
-- Carregue a planilha de **Compra / Lançamento**
-- Clique em **▶ Processar Auditoria**
-
-### 2. Analise o resultado
-Na tela **2 · Auditoria**:
-- Veja os KPIs: total, OK, inconsistências
-- Filtre por status, departamento ou nome
-- Exporte para Excel com um clique
-
-### 3. Recarregue sem reimportar
-Nas próximas vezes que abrir o sistema, clique em **"Carregar auditoria de MM/AAAA"** — os dados são recuperados do histórico automaticamente.
-
-### 4. Aprove as pendências
-Na tela **5 · Aprovação**, justifique cada inconsistência antes de fechar o mês.
+- `servidor.py` sobe o app (Flask + Dash, servido pelo waitress) na porta `UNIMED_PORTA` (padrão 8055).
+- **Camada da casa** (`setrata-casa`, instalado pela CentralFeedback): login (Google da equipe +
+  `admin@` local), porta de manutenção, feedback com triagem, e-mail de acesso, PWA. As rotas ficam
+  em `/_casa/...`. O app só escreve `casa/adaptador.py` (como guarda gente e abre sessão) e
+  `casa/instalar.py` (a ligação). **Mudanças nesses dois passam pelo TI.**
+- **Modo restrito**: só entra quem o administrador cadastrou em Gestão de usuários.
+- Segredos em `secrets/` (fora do git): `config.env` (`GOOGLE_CLIENT_ID/SECRET`, `UNIMED_SECRET_KEY`,
+  `UNIMED_PUBLIC_URL`, `CENTRAL_URL`, `CENTRAL_CODIGO_TOKEN`) e `admin-local.txt` (senha do `admin@`,
+  12+ caracteres). Sem `config.env` o app sobe só com o `admin@` local.
+- Cálculo e regras continuam em `app/` (processamento, regras, db, exportação, exclusões indevidas),
+  sem mudança. As telas estão em `web/telas/`; o trabalho de cada tela, em `web/servico*.py`.
+- Testes: `python -m pytest` — inclui a suíte de contrato da casa (`tests/test_casa_contrato.py`).
 
 ---
 
@@ -113,7 +102,8 @@ O sistema considera apenas as linhas com descrição:
 
 ## Tecnologias
 
-- **Streamlit** — interface web
+- **Dash** (Flask) + **dash-ag-grid** — interface web
+- **setrata-casa** — login, feedback e camada da casa
 - **Pandas** — cruzamento de dados
 - **Openpyxl** — exportação para Excel
 - **SQLite** — histórico de auditorias

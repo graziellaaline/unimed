@@ -1,8 +1,13 @@
-streamlit>=1.32.0
-streamlit-aggrid>=1.2.1
+# Auditoria Unimed V2 — Dash + camada da casa
+# A camada da casa vem da CentralFeedback (repo privado; fora da rede da Setrata, ligue a VPN).
+--find-links https://feedbacks.setrata.com/api/pacotes/
+setrata-casa==0.3.0
+dash==2.18.1
+dash-ag-grid==31.2.0
 pandas>=2.0.0
 openpyxl>=3.1.0
 xlrd>=2.0.1
+waitress>=3.0
 
 # Conferências automáticas (tests/) — a esteira de publicação roda antes de subir
 pytest==8.3.4

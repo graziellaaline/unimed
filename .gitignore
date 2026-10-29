@@ -39,3 +39,12 @@ static/_versao-app.json
 
 # Versoes antigas guardadas a mao
 _antigos/
+
+# versão Dash (ramo dash)
+.venv/
+secrets/
+config/serviceaccount.json
+dados/casa/
+dados/usuarios.sqlite
+dados/tema_padrao.json
+FEEDBACK-PENDENTE.md
